@@ -16,14 +16,30 @@ export function useWoopAccounts(): { ready: boolean; connected: string[]; accoun
   useEffect(() => {
     let live = true
     const load = async (): Promise<void> => {
+      // Direct YouTube publishing (Settings -> Publish to YouTube) also takes a
+      // watched channel's clips, with no WoopSocial needed for YouTube
+      // (server/youtube_automation.py).
+      let youtubeDirect = false
+      try {
+        const yt = await api.youtubeStatus()
+        youtubeDirect = Boolean(yt.enabled && yt.connected)
+      } catch {
+        youtubeDirect = false
+      }
+      let ready = false
+      let connected: string[] = []
+      let accounts: WoopAccount[] = []
       try {
         const status = await api.woopSocialStatus()
-        const ready = status.enabled && status.has_key
-        const connections = ready ? await api.woopSocialConnections() : {connected: [], accounts: []}
-        if (live) setWoop({ ready, connected: connections.connected, accounts: connections.accounts ?? [] })
+        ready = status.enabled && status.has_key
+        const connections = ready ? await api.woopSocialConnections() : { connected: [], accounts: [] }
+        connected = connections.connected
+        accounts = connections.accounts ?? []
       } catch {
-        if (live) setWoop({ ready: false, connected: [], accounts: [] })
+        ready = false
       }
+      if (youtubeDirect && !connected.includes('youtube')) connected = ['youtube', ...connected]
+      if (live) setWoop({ ready: ready || youtubeDirect, connected, accounts })
     }
     void load()
     return () => {

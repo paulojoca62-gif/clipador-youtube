@@ -373,7 +373,11 @@ class PublishWorker(threading.Thread):
         # in the editor because this is the one point both the editor and an
         # agent pass through, so neither can skip it, and because it applies to
         # clips that were generated long before any of this existed.
-        request_data["description"] = _describe(db, clip, request_data.get("description", ""))
+        # A watched channel set to "only my own hashtags" (server/youtube_automation.py).
+        skip_clip_tags = bool(request_data.pop("skip_clip_hashtags", False))
+        request_data["description"] = _describe(
+            db, clip, request_data.get("description", ""), clip_hashtags=not skip_clip_tags
+        )
 
         request = PublishRequest(
             video_path=path,
@@ -562,7 +566,7 @@ def seconds_until(iso: str) -> float:
     return max(0.0, (moment - datetime.now(timezone.utc)) / timedelta(seconds=1))
 
 
-def _describe(db: StateDB, clip, description: str) -> str:
+def _describe(db: StateDB, clip, description: str, *, clip_hashtags: bool = True) -> str:
     """The description as it will appear on YouTube, hashtags included.
 
     The creator's tag comes from the video's channel name rather than from
@@ -580,6 +584,8 @@ def _describe(db: StateDB, clip, description: str) -> str:
         if not isinstance(hashtags, list):
             hashtags = []
     except (TypeError, ValueError):
+        hashtags = []
+    if not clip_hashtags:
         hashtags = []
 
     creator = ""

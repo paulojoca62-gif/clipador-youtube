@@ -859,6 +859,15 @@ def create_app(config: dict, settings_path: Path) -> FastAPI:
             raise HTTPException(400, f"invalid options: {e}") from e
         return _process_options(patch, data_dir=data_dir)
 
+    # A watched channel's YouTube clips go straight up through the app's own
+    # YouTube upload when that is set up; other platforms still use WoopSocial.
+    from server import youtube_automation
+
+    watch_publisher = youtube_automation.routing_publisher(
+        youtube_automation.youtube_publisher(publish_worker),
+        automation.woopsocial_publisher(data_dir),
+    )
+
     channel_watcher = automation.install(
         app,
         db=db,
@@ -866,6 +875,7 @@ def create_app(config: dict, settings_path: Path) -> FastAPI:
         broadcaster=broadcaster,
         options_from=_watch_options,
         data_dir=data_dir,
+        publisher=watch_publisher,
         interval_minutes=float(config.get("poll_interval_minutes") or 15),
         feed=connected_feed,
         texts=clip_texts,
