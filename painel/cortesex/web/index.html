@@ -436,6 +436,22 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
       <div class="acoes"><button class="btn" onclick="salvarSistema()">💾 Salvar</button></div>
       <p class="mini" id="cofre-info"></p>
     </div>
+    <div class="card">
+      <h3>🔄 Atualizações</h3>
+      <div class="linha">
+        <div><label>Quando houver versão nova</label><select id="at-modo">
+          <option value="automatico">Atualizar sozinho (quando não estiver gravando nem postando)</option>
+          <option value="perguntar">Só avisar (eu clico em atualizar)</option>
+          <option value="desligado">Não verificar</option></select></div>
+      </div>
+      <p id="at-estado" class="mini">—</p>
+      <div class="acoes">
+        <button class="btn sec" onclick="salvarAtualizacao()">💾 Salvar</button>
+        <button class="btn sec" onclick="verificarAtualizacao(this)">🔎 Verificar agora</button>
+        <button class="btn" id="at-aplicar" onclick="aplicarAtualizacao(this)" hidden>⬇️ Atualizar agora</button>
+      </div>
+      <p class="mini">A versão nova vem só do GitHub oficial do CortesEX-PRESS e é conferida (SHA-256) antes de instalar. O programa fecha, instala em silêncio e abre de novo; um backup da configuração e do banco é feito antes.</p>
+    </div>
   </div>
 </section>
 
@@ -539,6 +555,23 @@ async function retomar(p){ await acao(() => api("/api/retomar/" + p, {})); carre
 
 /* configuração */
 const val = (id, v) => { const e = $("#" + id); if(!e) return; if(e.type === "checkbox") e.checked = !!v; else e.value = v ?? ""; };
+const SIT_ATUALIZACAO = {atualizado:"✅ Você está na versão mais recente", disponivel:"🆕 Versão nova disponível",
+  baixando:"⬇️ Baixando a versão nova", aguardando:"⏳ Versão nova baixada, esperando um momento livre", instalando:"🔄 Instalando…",
+  erro:"⚠️ Atualização", indisponivel:"Atualizador desligado nesta execução"};
+function mostrarAtualizacao(a){
+  const build = a.build_atual ? "build " + a.build_atual : "versão de desenvolvimento";
+  const novo = a.build_disponivel && a.build_disponivel > (a.build_atual || 0) ? " · no GitHub: build " + a.build_disponivel : "";
+  $("#at-estado").textContent = `${SIT_ATUALIZACAO[a.situacao] || a.situacao} — instalado: ${build}${novo}` +
+    (a.mensagem ? " — " + a.mensagem : "") + (a.ultima_checagem ? " · verificado " + quando(a.ultima_checagem) : "");
+  $("#at-aplicar").hidden = !(a.build_disponivel > (a.build_atual || 0) && a.pode_aplicar);
+}
+async function carregarAtualizacao(){ try{ mostrarAtualizacao(await api("/api/atualizacao")); }catch(e){} }
+async function salvarAtualizacao(){ await acao(() => api("/api/config/atualizacoes", {modo:$("#at-modo").value}).then(() => ({msg:"Salvo"}))); }
+async function verificarAtualizacao(b){ const r = await acao(() => api("/api/atualizacao/verificar", {}), b); if(r) mostrarAtualizacao(r); }
+async function aplicarAtualizacao(b){
+  if(!confirm("Atualizar agora? O programa fecha, instala a versão nova e abre de novo em cerca de 1 minuto.")) return;
+  const r = await acao(() => api("/api/atualizacao/aplicar", {}), b); if(r) mostrarAtualizacao(r);
+}
 async function carregarConfig(){
   CFG = await api("/api/config");
   const ag = CFG.agendador, dt = CFG.deteccao, gr = CFG.gravacao, ct = CFG.corte, lg = CFG.legendas;
@@ -558,6 +591,7 @@ async function carregarConfig(){
   val("an-ativo", CFG.analytics.ativo);
   $("#ps-versao").textContent = CFG.pontuacao.versao;
   $("#ps-pesos").innerHTML = Object.entries(CFG.pontuacao.pesos).map(([k,v]) => `<div><label>${esc(PESOS[k] || k)}</label><input type="number" min="0" max="100" data-peso="${k}" value="${v}"></div>`).join("");
+  val("at-modo", (CFG.atualizacoes || {}).modo || "automatico"); carregarAtualizacao();
   $("#cofre-info").textContent = CFG._cofre.erro ? "⚠️ " + CFG._cofre.erro : (CFG._cofre.cifrado ? "🔒 As chaves ficam cifradas com a proteção de dados do Windows (DPAPI), só para o seu usuário." : "As chaves ficam num arquivo só legível pelo seu usuário (sem cifra fora do Windows).");
   val("yt-client_id", CFG.youtube.client_id); val("yt-privacidade", CFG.youtube.privacidade);
   val("tt-client_key", CFG.tiktok.client_key); val("tt-redirect_uri", CFG.tiktok.redirect_uri); val("fb-app_id", CFG.facebook.app_id);

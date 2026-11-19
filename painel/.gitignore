@@ -5,3 +5,4 @@ saida/
 *.spec
 __pycache__/
 .pytest_cache/
+cortesex/_build.py

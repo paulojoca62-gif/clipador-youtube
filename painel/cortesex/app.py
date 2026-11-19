@@ -43,7 +43,8 @@ def configurar_log():
 def main(abrir_navegador: bool = True):
     url = f"http://127.0.0.1:{PORTA}/"
     if ja_aberto(PORTA):
-        webbrowser.open(url)
+        if abrir_navegador and "--sem-navegador" not in sys.argv:
+            webbrowser.open(url)
         return
     configurar_log()
     copia = backup_se_mudou(pasta_dados())
@@ -70,6 +71,9 @@ def main(abrir_navegador: bool = True):
         motor.encerrar()   # fecha streamlink e ffmpeg junto; nada fica gravando sozinho
         os._exit(0)
     painel.ao_encerrar = sair
+    from cortesex.atualizador import Atualizador
+    painel.atualizador = Atualizador(motor, pasta_dados(), encerrar=sair)
+    painel.atualizador.iniciar()
     for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
         if sig is not None:
             signal.signal(sig, sair)

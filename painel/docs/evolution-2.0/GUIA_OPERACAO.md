@@ -10,3 +10,20 @@
 - **Backup**: a cada versão nova, `backups/atualizacao-…` guarda config (sem chaves), cofre e banco (5 últimos). Migração do banco também guarda uma cópia antes de alterar.
 - **Limpeza**: vídeos após N dias (aprovados e envios em andamento são protegidos; publicados opcionalmente), fontes após 3 dias, temporários após 6 h. Abaixo do mínimo de disco, a gravação pausa.
 - **Diagnóstico**: saúde geral, recursos, dependências, contas, processos, gravações e erros recentes.
+
+## Atualização automática
+
+Configurações → Sistema → **🔄 Atualizações**.
+
+- **Atualizar sozinho** (padrão): a cada 6 h o programa consulta o release `cortesex-latest` no GitHub
+  oficial. Havendo build novo, baixa o instalador, confere o SHA-256 (do `versao.json` e o calculado pelo
+  GitHub) e espera um momento livre: nenhum envio em andamento, nenhum corte em processamento e nenhuma
+  live gravando. Se as lives não pararem em 24 h, atualiza assim que processamento e envios estiverem livres.
+  Então fecha, instala em silêncio (backup automático do banco e da configuração) e abre de novo.
+- **Só avisar**: mostra o build novo e o botão **Atualizar agora**.
+- **Não verificar**: desliga a consulta.
+
+Cada build é tentado no máximo 3 vezes; depois disso o painel pede a instalação manual. Os arquivos ficam
+em `<pasta de dados>\atualizacoes\` (`estado.json`, `ultima_instalacao.txt` com o código de saída do
+instalador e o log da instalação). Só os programas instalados a partir do build com o atualizador em diante
+se atualizam sozinhos; a instalação anterior a ele precisa ser feita à mão uma última vez.

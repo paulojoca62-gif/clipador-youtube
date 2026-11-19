@@ -61,6 +61,8 @@ jobs:
 
       - name: Empacotar (PyInstaller)
         run: |
+          # número do build dentro do exe: o atualizador compara com o versao.json do release
+          "BUILD = ${{ github.run_number }}`nCOMMIT = `"$env:GITHUB_SHA`"`n" | Out-File -Encoding utf8 cortesex\_build.py
           python -m PyInstaller run.py --noconfirm --clean --name CortesEX-PRESS --noconsole `
             --icon assets\cortesex.ico `
             --add-data "cortesex\web;web" --add-data "cortesex\fonts;fonts" `
@@ -69,7 +71,7 @@ jobs:
             --collect-all av --collect-all tokenizers `
             --collect-all streamlink --collect-all streamlink_cli `
             --collect-submodules websocket --collect-data certifi `
-            --hidden-import cortesex.app
+            --hidden-import cortesex.app --hidden-import cortesex._build
 
       - name: Testar o executável
         run: |
@@ -99,6 +101,27 @@ jobs:
           & $iscc /DVersao=2.0.${{ github.run_number }} instalador.iss
           Get-ChildItem saida
 
+      - name: Testar a atualização silenciosa (o mesmo comando que o atualizador usa)
+        run: |
+          $env:CORTESEX_DADOS = "$env:RUNNER_TEMP\cortesex-atualizacao"
+          $inst = (Get-ChildItem saida\*.exe | Select-Object -First 1).FullName
+          $exe = "$env:LOCALAPPDATA\Programs\CortesEX-PRESS\CortesEX-PRESS.exe"
+          $reg = "$env:RUNNER_TEMP\ultima_instalacao.txt"
+          python -c "import sys,subprocess; from pathlib import Path; from cortesex.atualizador import comando_instalacao as c; subprocess.Popen(c(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])), creationflags=0x208, close_fds=True)" $inst $exe $reg
+          for ($i = 0; $i -lt 90 -and -not (Test-Path $reg); $i++) { Start-Sleep 2 }
+          if (-not (Test-Path $reg)) { throw "o instalador silencioso não terminou" }
+          $cod = (Get-Content $reg).Trim()
+          Write-Host "código do instalador: $cod"
+          if ($cod -ne "0") { Get-Content "$env:RUNNER_TEMP\ultima_instalacao.log" -ErrorAction SilentlyContinue; throw "instalação falhou" }
+          $ok = $false
+          for ($i = 0; $i -lt 40 -and -not $ok; $i++) {
+            Start-Sleep 2
+            try { $ok = (Invoke-RestMethod "http://127.0.0.1:8777/api/estado").nome -eq "CortesEX-PRESS" } catch {}
+          }
+          Get-Process CortesEX-PRESS -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $ok) { throw "o programa não reabriu depois da atualização" }
+          Write-Host "instalou em silêncio e reabriu sozinho"
+
       - uses: actions/upload-artifact@v4
         with:
           name: CortesEX-PRESS-Instalador
@@ -113,8 +136,14 @@ jobs:
         run: |
           $exe = (Get-ChildItem saida\*.exe | Select-Object -First 1).FullName
           Copy-Item $exe saida\CortesEX-PRESS-Instalador.exe
+          $item = Get-Item saida\CortesEX-PRESS-Instalador.exe
+          $hash = (Get-FileHash $item.FullName -Algorithm SHA256).Hash.ToLower()
+          # versao.json: o que o atualizador automático dos programas instalados lê
+          @{ build = ${{ github.run_number }}; commit = "$env:GITHUB_SHA"; sha256 = $hash; tamanho = $item.Length } |
+            ConvertTo-Json -Compress | Out-File -Encoding ascii saida\versao.json
+          Get-Content saida\versao.json
           gh release delete cortesex-latest --yes --cleanup-tag 2>$null
-          gh release create cortesex-latest saida\CortesEX-PRESS-Instalador.exe `
+          gh release create cortesex-latest saida\CortesEX-PRESS-Instalador.exe saida\versao.json `
             --target $env:GITHUB_SHA --prerelease `
             --title "CortesEX-PRESS para Windows (build ${{ github.run_number }})" `
             --notes "Baixe CortesEX-PRESS-Instalador.exe, rode e abra pelo atalho da área de trabalho. Commit $env:GITHUB_SHA."

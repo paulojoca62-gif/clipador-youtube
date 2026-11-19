@@ -26,6 +26,7 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "pt"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -44,6 +45,7 @@ Name: "{autodesktop}\{#Nome}"; Filename: "{app}\CortesEX-PRESS.exe"; Tasks: desk
 Name: "{userstartup}\{#Nome}"; Filename: "{app}\CortesEX-PRESS.exe"; Tasks: iniciar
 
 [Run]
+; Na atualização automática (instalação silenciosa) quem reabre o programa é o atualizador, depois do instalador.
 Filename: "{app}\CortesEX-PRESS.exe"; Description: "Abrir o {#Nome} agora"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

@@ -25,7 +25,7 @@ from cortesex.util import pasta_app
 log = logging.getLogger("cortesex")
 WEB = pasta_app() / "web"
 SECOES = ("gravacao", "deteccao", "agendador", "youtube", "tiktok", "facebook", "gemini", "telegram",
-          "corte", "legendas", "pontuacao", "processamento", "armazenamento", "analytics")
+          "corte", "legendas", "pontuacao", "processamento", "armazenamento", "analytics", "atualizacoes")
 
 
 def extrair_codigo(texto: str) -> tuple[str, str]:
@@ -57,6 +57,7 @@ class Painel:
         self.estados = {}        # state do OAuth -> plataforma
         self.fb_paginas = {}     # id -> página (com token), da última consulta
         self.ao_encerrar = None
+        self.atualizador = None  # cortesex.atualizador.Atualizador (só no programa aberto pelo app)
         self.verificadores = {}  # state -> code_verifier (PKCE do TikTok)
         # Token anti-CSRF: aleatório por execução, só vai dentro da página servida com Host válido.
         # Outro site não consegue lê-lo (mesma origem) nem enviar cabeçalho próprio sem CORS.
@@ -142,7 +143,15 @@ class Painel:
             return analytics.relatorio(m.banco)
         if caminho == "/api/diagnostico":
             return diagnostico.coletar(m)
+        if caminho == "/api/atualizacao":
+            return self._estado_atualizacao()
         raise KeyError(caminho)
+
+    def _estado_atualizacao(self):
+        if not self.atualizador:
+            return {"situacao": "indisponivel", "mensagem": "atualizador desligado nesta execução",
+                    "build_atual": None, "build_disponivel": None}
+        return {**self.atualizador.estado, "modo": self.atualizador.cfg()["modo"]}
 
     # ----- ações
     def post(self, caminho, corpo):
@@ -200,6 +209,14 @@ class Painel:
             if self.ao_encerrar:
                 threading.Timer(0.5, self.ao_encerrar).start()
             return {"ok": True}
+        if caminho in ("/api/atualizacao/verificar", "/api/atualizacao/aplicar"):
+            if not self.atualizador:
+                raise ValueError("o atualizador não está ligado nesta execução")
+            if caminho.endswith("verificar"):
+                self.atualizador.verificar()
+            else:
+                self.atualizador.passo(forcar=True)
+            return self._estado_atualizacao()
         if caminho == "/api/clipar":
             return {"ok": m.clipar_agora(str(corpo.get("canal", "")))}
         if mm := re.fullmatch(r"/api/corte/(\d+)/(\w+)", caminho):

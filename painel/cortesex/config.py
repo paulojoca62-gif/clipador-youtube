@@ -113,6 +113,11 @@ PADRAO = {
         "plataformas": {"youtube": True, "tiktok": False, "facebook": False},
     },
     "analytics": {"ativo": True, "horas_entre_coletas": 6, "dias_acompanhar": 30},
+    "atualizacoes": {
+        "modo": "automatico",          # automatico | perguntar | desligado
+        "horas_entre_checagens": 6,
+        "espera_maxima_horas": 24,     # se as lives não param, atualiza assim que nada estiver em processamento
+    },
     "youtube": {"client_id": "", "client_secret": "", "refresh_token": "", "canal": "", "redirect_uri": "",
                 "privacidade": "public", "categoria": "20"},
     "tiktok": {"client_key": "", "client_secret": "", "refresh_token": "", "access_token": "",
