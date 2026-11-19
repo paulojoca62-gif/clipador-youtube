@@ -217,7 +217,10 @@ O sistema diferencia o fim do upload ("processando") da publicação efetiva ("p
 `tests/test_auditoria.py` tem **15 testes**:
 - **11 passam e 4 são xfail estritos.** Os xfail documentam M1, M2, M3 e L1: se alguém corrigir um deles, o teste passa a falhar e precisa virar teste normal.
 - **4 desses 11 falhavam antes das correções:** H1, H2, H4 e o teste de órfãos, que era H3 e foi demonstrado com `orfao.py`.
-- **Total:** 79 passam e 4 são xfail. Rodei 3 vezes seguidas no Linux. O resultado no Windows está no CI deste commit.
+- **Total:** 79 passam e 4 são xfail. Rodei 3 vezes seguidas no Linux.
+- **Windows (run #8, commit `2347cc5`):** no log do step de testes, **79 "." e 4 "x", sem F/E/s**. Isso inclui
+  `test_processo_de_gravacao_morre_junto_com_o_programa`, que valida o Job Object `KILL_ON_JOB_CLOSE` num Windows real.
+  O exe abriu o painel, o instalador foi montado e o step de publicação foi pulado (sem release).
 - **Asserts antigos:** nenhum foi removido ou afrouxado.
 - **Simulações:** os testes de rede continuam simulados e estão declarados assim.
 
