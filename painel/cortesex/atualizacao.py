@@ -4,7 +4,9 @@ Guarda as 5 cópias mais recentes. Não baixa nem executa nada (atualizar é ins
 """
 
 import json
+import os
 import shutil
+import sys
 import sqlite3
 import time
 from pathlib import Path
@@ -50,6 +52,10 @@ def backup_se_mudou(pasta: Path, manter=5) -> Path | None:
                 _copiar_config_sem_chaves(arq, destino / arq.name)
             else:
                 shutil.copy2(arq, destino / arq.name)
+        if sys.platform != "win32":
+            for f in destino.iterdir():        # AUD-L5: fora do Windows o cofre não é cifrado → só o dono lê
+                os.chmod(f, 0o600)
+            os.chmod(destino, 0o700)
         antigos = sorted((p for p in (pasta / "backups").glob("atualizacao-*") if p.is_dir()),
                          key=lambda p: p.stat().st_mtime)
         for p in antigos[:-manter]:

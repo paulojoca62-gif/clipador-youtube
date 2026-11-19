@@ -136,13 +136,17 @@ class Motor:
         self.ia_status = {"ok": None, "quando": 0.0, "erro": ""}
         self._lock_post = threading.Lock()
         self._lock_pegar = threading.Lock()
+        self.workers = max(1, min(int(self.config.get("processamento", "workers_montagem") or 1), 4))
+        # AUD-M2: pipeline e editor dividem o mesmo limite de montagens simultâneas
+        self._sem_montagem = threading.BoundedSemaphore(self.workers)
         self._lock_reserva = threading.Lock()
 
     # ----- ciclo de vida
     def iniciar(self):
         self.sincronizar_canais()
-        workers = max(1, min(int(self.config.get("processamento", "workers_montagem") or 1), 4))
+        workers = self.workers
         alvos = [(f"pipeline-{i + 1}", self._loop_pipeline) for i in range(workers)] + [
+            ("ia", self._loop_ia),
             ("agendador", self._loop_agendador), ("verificador", self._loop_verificar),
             ("limpeza", self._loop_limpeza), ("textos", self._loop_textos), ("analytics", self._loop_analytics)]
         for nome, alvo in alvos:
@@ -207,6 +211,8 @@ class Motor:
             antes, depois = float(D_["antes_segundos"]), float(D_["depois_segundos"])
         momento = job["momento"]
         aberto = self.banco.candidato_aberto(canal.nome, momento - float(D_.get("agrupar_segundos", 30)))
+        if job.get("somente_agrupar") and not aberto:
+            return None       # pico dentro do intervalo mínimo e sem corte aberto: ignorado (como antes)
         if aberto:
             self.banco.agrupar(aberto["id"], momento + depois, job["score"], job["motivo"], job["chat"])
             log.info("[%s] pico agrupado ao corte #%s (mesmo evento)", canal.nome, aberto["id"])
@@ -223,11 +229,26 @@ class Motor:
         return canal.disparar("manual (painel)", score=0, manual=True) is not None
 
     # ----- pipeline
+    ETAPAS_MIDIA = (D.DETECTADO, D.CAPTURADO, D.TRANSCRITO)
+    ETAPAS_IA = (D.MONTADO,)
+
+    def _loop_ia(self, nome):
+        """AUD-M4: a IA (rede, até ~2,5 min no pior caso) roda fora dos workers de mídia."""
+        while not self.parar.is_set():
+            self._bater(nome)
+            try:
+                feito = self.processar_proximo(etapas=self.ETAPAS_IA)
+            except Exception:  # noqa: BLE001
+                log.exception("erro na etapa da IA")
+                feito = False
+            if not feito:
+                self.parar.wait(1)
+
     def _loop_pipeline(self, nome):
         while not self.parar.is_set():
             self._bater(nome)
             try:
-                feito = self.processar_proximo()
+                feito = self.processar_proximo(etapas=self.ETAPAS_MIDIA)
             except Exception:  # noqa: BLE001
                 log.exception("erro no pipeline")
                 feito = False
@@ -238,12 +259,13 @@ class Motor:
         t = int(c.get("etapa_tentativas") or 0)
         return t == 0 or agora >= float(c.get("atualizado") or 0) + util.backoff(t, base=20, maximo=600, jitter=0)
 
-    def processar_proximo(self, agora=None) -> bool:
+    def processar_proximo(self, agora=None, etapas=None) -> bool:
         agora = agora or time.time()
-        etapas = [(D.DETECTADO, D.CAPTURANDO, self._etapa_capturar),
-                  (D.CAPTURADO, D.TRANSCREVENDO, self._etapa_transcrever),
-                  (D.TRANSCRITO, D.MONTANDO, self._etapa_montar),
-                  (D.MONTADO, D.GERANDO_TEXTOS, self._etapa_textos)]
+        todas = [(D.DETECTADO, D.CAPTURANDO, self._etapa_capturar),
+                 (D.CAPTURADO, D.TRANSCREVENDO, self._etapa_transcrever),
+                 (D.TRANSCRITO, D.MONTANDO, self._etapa_montar),
+                 (D.MONTADO, D.GERANDO_TEXTOS, self._etapa_textos)]
+        etapas = [e for e in todas if etapas is None or e[0] in etapas]
         with self._lock_pegar:
             escolhido = None
             for de, para, func in etapas:
@@ -319,7 +341,11 @@ class Motor:
                    "inicio_alinhado": False, "fim_alinhado": False, "metodo": "fixo"}
         return lim, t_pico
 
-    def _etapa_montar(self, c, limites=None, segmentos=None):
+    def _etapa_montar(self, c, limites=None, segmentos=None, estado_final=D.MONTADO):
+        with self._sem_montagem:
+            return self._montar(c, limites, segmentos, estado_final)
+
+    def _montar(self, c, limites, segmentos, estado_final):
         arq = arquivos(c)
         if not arq["fonte"].exists():
             raise ErroEtapa("a fonte do corte sumiu", definitivo=True)
@@ -352,7 +378,7 @@ class Motor:
                   "score_tecnico": editorial.score_tecnico(info, sinal),
                   "versao_render": int(c.get("versao_render") or 0) + 1}
         campos.update(self._pontuacao(c, sinal, lim, c.get("analise") or {}))
-        self.banco.mudar_estado(c["id"], D.MONTADO, f"vídeo montado ({fim - ini:.0f} s, {lim['metodo']})", **campos)
+        self.banco.mudar_estado(c["id"], estado_final, f"vídeo montado ({fim - ini:.0f} s, {lim['metodo']})", **campos)
         log.info("[%s] corte #%s montado: %.0f s (%s)", c["canal"], c["id"], fim - ini, lim["metodo"])
 
     def _pontuacao(self, c, sinal, lim, analise):
@@ -365,7 +391,9 @@ class Motor:
     def _etapa_textos(self, c):
         gem = self.config.get("gemini")
         detalhe = "sem chave do Gemini: textos ficam para o usuário"
-        if gem.get("api_key"):
+        if c.get("titulo"):
+            detalhe = "textos já existentes mantidos"       # retomada após queda no editor: não sobrescreve
+        elif gem.get("api_key"):
             try:
                 r = ia.analisar_e_escrever(c["canal"], c.get("fala", ""), c.get("chat", []), gem["api_key"],
                                            gem.get("modelo"))
@@ -405,6 +433,9 @@ class Motor:
         minimo = float(ag.get("score_editorial_minimo") or 0)
         if minimo and (c.get("score_editorial") is None or c["score_editorial"] < minimo):
             return False
+        cobertura_min = float(ag.get("cobertura_minima", 0.5) or 0)
+        if minimo and float(c.get("confianca") or 0) < cobertura_min:
+            return False      # nota alta com pouca informação avaliada não passa sozinha
         if ag.get("exigir_textos_ia", True) and not c.get("titulo"):
             return False
         return self._validado(c)
@@ -447,13 +478,23 @@ class Motor:
         return volta
 
     def remontar(self, corte_id, segmentos=None, ini=None, fim=None):
-        """Editor: monta de novo a partir da fonte, com legendas/limites editados. Guarda o vídeo original."""
+        """Editor: monta de novo a partir da fonte, com legendas/limites editados. Guarda o vídeo original.
+
+        AUD-M2: só para cortes prontos; o corte é reservado (estado 'montando') durante a montagem, então
+        o pipeline não o pega no meio, e a montagem divide o limite de workers com o pipeline.
+        AUD-L1: respeita a permissão "editar" registrada para o canal.
+        """
         c = self.banco.corte(corte_id)
+        if not c:
+            raise KeyError(corte_id)
+        if c["estado"] not in D.PRONTOS:
+            raise ValueError(f"o corte está '{c['estado']}': só cortes prontos podem ser editados")
+        aut = (self.config.canal(c["canal"]) or {}).get("autorizacao") or {}
+        if aut.get("editar") is False:
+            raise ValueError("a autorização deste canal não permite editar os cortes")
         arq = arquivos(c)
         if not arq["fonte"].exists():
             raise ErroEtapa("a fonte deste corte já foi apagada (retenção); não dá para montar de novo")
-        if arq["video"].exists() and not arq["original"].exists():
-            shutil.copy2(arq["video"], arq["original"])
         limites = None
         if ini is not None and fim is not None:
             dmax = float(self.config.get("corte", "duracao_max") or 90)
@@ -465,12 +506,18 @@ class Motor:
             dur = (fim if fim is not None else c["corte_fim"]) - (ini if ini is not None else c["corte_ini"])
             segmentos = legendas.validar_segmentos(segmentos, dur)
         estado_antes = c["estado"]
-        self._etapa_montar(c, limites=limites, segmentos=segmentos)
-        # o corte volta ao estado em que estava (aprovado continua aprovado)
-        if estado_antes in D.PRONTOS:
-            self.banco.mudar_estado(corte_id, estado_antes, "remontado no editor")
-        else:
-            self.banco.mudar_estado(corte_id, D.REVISAO, "remontado no editor")
+        if not self.banco.reivindicar(corte_id, estado_antes, D.MONTANDO):
+            raise ValueError("o corte mudou de estado agora há pouco; tente de novo")
+        try:
+            if arq["video"].exists() and not arq["original"].exists():
+                shutil.copy2(arq["video"], arq["original"])
+            self._etapa_montar(self.banco.corte(corte_id), limites=limites, segmentos=segmentos,
+                               estado_final=estado_antes)
+        except Exception:
+            self.banco.mudar_estado(corte_id, estado_antes, "edição falhou; vídeo anterior mantido",
+                                    zerar_tentativas=False)
+            raise
+        self.banco.historico(corte_id, estado_antes, "remontado no editor")
         return self.banco.corte(corte_id)
 
     def editor(self, corte_id) -> dict:
@@ -497,7 +544,10 @@ class Motor:
                 ok, motivo = autorizado_para(self.config.canal(corte["canal"]), plataforma)
                 if not ok:
                     raise ErroPostagem(f"{NOMES[plataforma]}: publicação bloqueada — {motivo}", False, PERMANENTE)
-            pid = self.banco.nova_postagem(corte["id"], plataforma, origem)
+            try:
+                pid = self.banco.nova_postagem(corte["id"], plataforma, origem, forcado=forcar)
+            except D.PostagemDuplicada as e:
+                raise ErroPostagem(f"{NOMES[plataforma]}: {e}", False, PERMANENTE) from e
         try:
             if not Path(corte["arquivo"]).exists() or corte.get("arquivo_removido"):
                 raise ErroPostagem("O arquivo do corte não existe mais.", False, MIDIA)
@@ -600,7 +650,10 @@ class Motor:
         elif ordem == "recente":
             bons.sort(key=lambda c: c["criado"], reverse=True)
         else:
-            bons.sort(key=lambda c: (c.get("score_editorial") if c.get("score_editorial") is not None else -1,
+            # AUD-M5: primeiro os cortes com cobertura suficiente, depois a nota; nota parcial não "fura a fila"
+            cob = float(ag.get("cobertura_minima", 0.5) or 0)
+            bons.sort(key=lambda c: (float(c.get("confianca") or 0) >= cob,
+                                     c.get("score_editorial") if c.get("score_editorial") is not None else -1,
                                      c["score"]), reverse=True)
         if ag.get("evitar_mesmo_canal_seguido") and len(bons) > 1:
             ultimo = self.banco.ultimo_canal_postado(plataforma)
@@ -654,7 +707,13 @@ class Motor:
                 self.banco.fim_postagem(p["id"], "postado", url=p["url"], detalhe="sem verificação disponível")
                 continue
             try:
-                r = mod.verificar(self.config.get(p["plataforma"]), p["ext_id"])
+                cfg = self.config.get(p["plataforma"])
+                if p["plataforma"] == "tiktok":
+                    novo = tiktok.renovar(cfg)
+                    if novo:
+                        self.config.salvar("tiktok", novo)
+                        cfg.update(novo)
+                r = mod.verificar(cfg, p["ext_id"])
             except Exception as e:  # noqa: BLE001
                 if agora - p["quando"] > 86400:
                     self.banco.fim_postagem(p["id"], "incerto", url=p["url"],
@@ -757,8 +816,11 @@ class Motor:
     def limpar(self, agora=None) -> dict:
         agora = agora or time.time()
         G, A = self.config.get("gravacao"), self.config.get("armazenamento")
+        pendentes = {}
+        for c in self.banco.pendentes([D.DETECTADO, D.CAPTURANDO], limite=500):
+            pendentes[c["canal"]] = min(pendentes.get(c["canal"], c["janela_ini"]), c["janela_ini"])
         for c in list(self.canais.values()):
-            c.limpar(G["buffer_minutos"])
+            c.limpar(G["buffer_minutos"], protegido_desde=pendentes.get(c.nome))
         # espaço em disco
         livre_gb = shutil.disk_usage(self.pasta).free / 1e9
         baixo = livre_gb < float(A.get("minimo_livre_gb", 5))

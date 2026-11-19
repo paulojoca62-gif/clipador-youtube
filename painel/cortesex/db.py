@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS cortes (
@@ -82,7 +83,8 @@ COLUNAS_CORTES = {
     "versao_render": "INTEGER DEFAULT 0", "arquivo_removido": "INTEGER DEFAULT 0",
     "aprovado_em": "REAL DEFAULT 0", "motivo_descarte": "TEXT DEFAULT ''", "textos_plataforma": "TEXT DEFAULT '{}'",
 }
-COLUNAS_POSTAGENS = {"ext_id": "TEXT DEFAULT ''", "tipo_erro": "TEXT DEFAULT ''", "detalhe": "TEXT DEFAULT ''"}
+COLUNAS_POSTAGENS = {"ext_id": "TEXT DEFAULT ''", "tipo_erro": "TEXT DEFAULT ''", "detalhe": "TEXT DEFAULT ''",
+                     "forcado": "INTEGER DEFAULT 0"}
 JSON_CAMPOS = ("chat", "hashtags", "criterios", "flags", "analise", "validacao", "textos_plataforma")
 
 # Estados do corte
@@ -96,6 +98,25 @@ PRONTOS = (REVISAO, APROVADO)
 OCUPA_REDE = ("enviando", "processando", "postado", "incerto")
 
 
+class BancoCorrompido(RuntimeError):
+    """O arquivo do banco não abre ou falhou na verificação de integridade. Nada foi alterado nele."""
+
+    def __init__(self, arquivo, detalhe, backups):
+        super().__init__(f"O banco {arquivo} está danificado ({detalhe}).")
+        self.arquivo, self.detalhe, self.backups = Path(arquivo), detalhe, backups
+
+
+class PostagemDuplicada(RuntimeError):
+    pass
+
+
+def backups_do_banco(pasta_backup: Path) -> list:
+    """Cópias do banco disponíveis para restaurar, da mais nova para a mais velha."""
+    pasta_backup = Path(pasta_backup)
+    achados = list(pasta_backup.glob("*.db")) + list(pasta_backup.glob("atualizacao-*/cortesex.db"))
+    return sorted(achados, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
 class Banco:
     def __init__(self, arquivo: Path, pasta_backup: Path | None = None):
         self.arquivo = Path(arquivo)
@@ -106,12 +127,20 @@ class Banco:
     def _migrar(self, pasta_backup: Path):
         existia = self.arquivo.exists() and self.arquivo.stat().st_size > 0
         if existia:
-            con = sqlite3.connect(str(self.arquivo))
+            # AUD-M6: confere a integridade ANTES de qualquer escrita; corrompido → avisa, não mexe no arquivo
             try:
-                tabelas = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                cols = {r[1] for r in con.execute("PRAGMA table_info(cortes)")} if "cortes" in tabelas else set()
-            finally:
-                con.close()
+                con = sqlite3.connect("file:" + quote(self.arquivo.resolve().as_posix(), safe="/:") + "?mode=ro",
+                                      uri=True)
+                try:
+                    ok = con.execute("PRAGMA quick_check").fetchone()[0]
+                    tabelas = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                    cols = {r[1] for r in con.execute("PRAGMA table_info(cortes)")} if "cortes" in tabelas else set()
+                finally:
+                    con.close()
+            except sqlite3.DatabaseError as e:
+                raise BancoCorrompido(self.arquivo, str(e), backups_do_banco(pasta_backup)) from e
+            if ok != "ok":
+                raise BancoCorrompido(self.arquivo, str(ok)[:200], backups_do_banco(pasta_backup))
             if "cortes" in tabelas and not set(COLUNAS_CORTES) <= cols:
                 pasta_backup.mkdir(parents=True, exist_ok=True)
                 destino = pasta_backup / f"cortesex-antes-da-migracao-{time.strftime('%Y%m%d-%H%M%S')}.db"
@@ -133,6 +162,22 @@ class Banco:
                 " momento = criado, atualizado = criado WHERE estado IS NULL").rowcount
             if n:
                 self.migracoes.append(f"{n} corte(s) da versão anterior marcados como prontos para revisão")
+            # AUD-H1 (reforço no banco): no máximo um envio ativo por corte e rede, mesmo com dois processos.
+            # "Postar de novo" de propósito marca forcado=1 e fica fora da regra.
+            try:
+                self.con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_postagem_ativa ON postagens(corte_id, plataforma)"
+                                 " WHERE status IN ('enviando','processando','postado','incerto') AND forcado = 0")
+            except sqlite3.IntegrityError:
+                self.migracoes.append("há envios repetidos antigos no banco: a trava extra de duplicidade não foi "
+                                      "criada (a trava do programa continua valendo)")
+            # AUD-L6: eventos gravados antes da redação de segredos
+            if not self.con.execute("SELECT 1 FROM meta WHERE chave='eventos_redigidos'").fetchone():
+                from cortesex.seguranca import redigir
+                for i, t in self.con.execute("SELECT id, texto FROM eventos").fetchall():
+                    limpo = redigir(t)
+                    if limpo != t:
+                        self.con.execute("UPDATE eventos SET texto=? WHERE id=?", (limpo, i))
+                self.con.execute("INSERT INTO meta (chave, valor) VALUES ('eventos_redigidos', '1')")
             self.con.commit()
 
     def _exec(self, sql, args=()):
@@ -340,9 +385,14 @@ class Banco:
         return r[0] if r else None
 
     # ----- postagens
-    def nova_postagem(self, corte_id, plataforma, origem="agendador") -> int:
-        return self._exec("INSERT INTO postagens (corte_id, plataforma, status, quando, origem)"
-                          " VALUES (?,?,?,?,?)", (corte_id, plataforma, "enviando", time.time(), origem)).lastrowid
+    def nova_postagem(self, corte_id, plataforma, origem="agendador", forcado=False) -> int:
+        """Reserva o envio (status 'enviando'). Levanta PostagemDuplicada se já houver um ativo."""
+        try:
+            return self._exec("INSERT INTO postagens (corte_id, plataforma, status, quando, origem, forcado)"
+                              " VALUES (?,?,?,?,?,?)", (corte_id, plataforma, "enviando", time.time(), origem,
+                                                        1 if forcado else 0)).lastrowid
+        except sqlite3.IntegrityError as e:
+            raise PostagemDuplicada(f"já existe um envio ativo deste corte para {plataforma}") from e
 
     def fim_postagem(self, post_id, status, url="", erro="", tipo_erro="", ext_id=None, detalhe=""):
         sets = "status=?, url=?, erro=?, tipo_erro=?, quando=?, detalhe=?"

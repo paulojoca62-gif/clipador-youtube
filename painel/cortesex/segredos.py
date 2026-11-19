@@ -31,15 +31,24 @@ def _dpapi(dados: bytes, cifrar: bool) -> bytes:
     entrada, _b1 = blob(dados)
     entropia, _b2 = blob(ENTROPIA)
     saida = DATA_BLOB()
-    crypt32 = ctypes.windll.crypt32
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    PBLOB = ctypes.POINTER(DATA_BLOB)
     funcao = crypt32.CryptProtectData if cifrar else crypt32.CryptUnprotectData
-    ok = funcao(ctypes.byref(entrada), None, ctypes.byref(entropia), None, None, 0x01, ctypes.byref(saida))
+    # assinaturas explícitas (64 bits): Protect(pIn, szDesc, pEntropy, pvReserved, pPrompt, flags, pOut)
+    funcao.argtypes = [PBLOB, ctypes.c_void_p, PBLOB, ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, PBLOB]
+    funcao.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    CRYPTPROTECT_UI_FORBIDDEN = 0x01
+    ok = funcao(ctypes.byref(entrada), None, ctypes.byref(entropia), None, None, CRYPTPROTECT_UI_FORBIDDEN,
+                ctypes.byref(saida))
     if not ok:
-        raise OSError("DPAPI recusou a operação (arquivo de outro usuário/computador?)")
+        raise OSError(ctypes.get_last_error(), "DPAPI recusou a operação (arquivo de outro usuário/computador?)")
     try:
         return ctypes.string_at(saida.pbData, saida.cbData)
     finally:
-        ctypes.windll.kernel32.LocalFree(saida.pbData)
+        kernel32.LocalFree(ctypes.cast(saida.pbData, ctypes.c_void_p))
 
 
 def protegido() -> bool:

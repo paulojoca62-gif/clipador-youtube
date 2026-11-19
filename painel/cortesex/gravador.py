@@ -89,10 +89,7 @@ class Canal:
     def encerrar(self):
         self.parar.set()
         for proc in (self._fluxo, self._ff):
-            try:
-                proc and proc.kill()
-            except OSError:
-                pass
+            util.matar_arvore(proc, espera=2)
 
     # ----- estado
     def segmentos(self):
@@ -178,18 +175,20 @@ class Canal:
                 log.warning("[%s] o ffmpeg da gravação parou: reiniciando", self.nome)
                 self.reinicios += 1
                 break
+            if not self.pode_gravar():
+                log.warning("[%s] gravação interrompida: pouco espaço em disco", self.nome)
+                break
             self.parar.wait(1)
         if self._fluxo.poll() is None:
-            self._fluxo.kill()
-            self._fluxo.wait()
+            util.matar_arvore(self._fluxo)
         try:
             erro = erros.read_bytes()[-2000:]
         except OSError:
             erro = b""
         try:
-            self._ff.wait(timeout=10)
+            self._ff.wait(timeout=10)            # fim normal: o ffmpeg fecha o último bloco
         except subprocess.TimeoutExpired:
-            self._ff.kill()
+            util.matar_arvore(self._ff)
         if time.time() - inicio < 60:
             linhas = erro.decode(errors="ignore").strip().splitlines()
             raise RuntimeError(linhas[-1] if linhas else "sem live agora")
@@ -209,6 +208,7 @@ class Canal:
                 ws.send(f"NICK justinfan{random.randint(10000, 99999)}")
                 ws.send(f"JOIN #{self.nome}")
                 self.inicio_chat = time.time()
+                self.falhas_chat = 0
                 log.info("[%s] conectado ao chat", self.nome)
                 ws.settimeout(400)
                 while not self.parar.is_set():
@@ -232,7 +232,8 @@ class Canal:
                     except Exception:  # noqa: BLE001
                         pass
             self.inicio_chat = None
-            self.parar.wait(5)
+            self.falhas_chat = getattr(self, "falhas_chat", 0) + 1
+            self.parar.wait(util.backoff(self.falhas_chat, base=5, maximo=120, jitter=0.2))
 
     def nova_msg(self, texto, agora=None):
         agora = agora or time.time()
@@ -283,6 +284,9 @@ class Canal:
         D, G = self.config.get("deteccao"), self.config.get("gravacao")
         if not manual:
             if agora - self.ultimo_corte < D["cooldown_segundos"]:
+                amostra = [m[2] for m in self.msgs if m[0] >= agora - D["janela_segundos"] - 4]
+                self.agendar_corte({"canal": self, "momento": agora, "score": round(score, 2), "motivo": motivo,
+                                    "chat": amostra[-20:], "somente_agrupar": True})
                 return None
             while self.cortes_hora and self.cortes_hora[0] < agora - 3600:
                 self.cortes_hora.popleft()
@@ -303,8 +307,11 @@ class Canal:
     def nome_corte(self, momento):
         return datetime.fromtimestamp(momento).strftime("%Y%m%d_%H%M%S") + f"_{self.nome}"
 
-    def limpar(self, buffer_minutos):
+    def limpar(self, buffer_minutos, protegido_desde=None, maximo_horas=3):
         limite = time.time() - buffer_minutos * 60
+        if protegido_desde:
+            # guarda desde o início da janela do candidato pendente mais antigo (com teto de segurança)
+            limite = max(min(limite, protegido_desde - 10), time.time() - maximo_horas * 3600)
         for ts, p in self.segmentos():
             if ts < limite:
                 try:

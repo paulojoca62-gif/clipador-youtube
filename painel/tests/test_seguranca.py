@@ -92,6 +92,13 @@ def servidor(ambiente):
     srv.shutdown()
 
 
+def token_da_pagina(porta):
+    """Pega o token anti-CSRF do jeito que o navegador pega: lendo a página servida pelo painel."""
+    import re
+    _, _, html = pedir(porta, "GET", "/")
+    return re.search(rb'const TOKEN = "([^"]+)"', html).group(1).decode()
+
+
 def pedir(porta, metodo, caminho, host=None, cab=None, corpo=None):
     con = http.client.HTTPConnection("127.0.0.1", porta, timeout=10)
     h = {"Host": host or f"127.0.0.1:{porta}", **(cab or {})}
@@ -106,11 +113,14 @@ def test_painel_bloqueia_dns_rebinding_e_csrf(servidor):
     assert st == 200 and cab["X-Frame-Options"] == "DENY" and cab["Referrer-Policy"] == "no-referrer"
     assert pedir(porta, "GET", "/api/config", host="evil.example:8777")[0] == 403
     assert pedir(porta, "POST", "/api/encerrar", corpo={})[0] == 403                     # sem o cabeçalho
-    assert pedir(porta, "POST", "/api/config/gemini", cab={"X-CortesEX": "1", "Origin": "http://evil.com"},
+    tk = token_da_pagina(porta)
+    assert len(tk) >= 32 and tk != "__CORTESEX_TOKEN__"
+    assert pedir(porta, "POST", "/api/config/gemini", cab={"X-CortesEX": "1"}, corpo={"modelo": "x"})[0] == 403
+    assert pedir(porta, "POST", "/api/config/gemini", cab={"X-CortesEX": tk, "Origin": "http://evil.com"},
                  corpo={"modelo": "x"})[0] == 403
-    assert pedir(porta, "POST", "/api/config/gemini", cab={"X-CortesEX": "1", "Origin": f"http://127.0.0.1:{porta}"},
+    assert pedir(porta, "POST", "/api/config/gemini", cab={"X-CortesEX": tk, "Origin": f"http://127.0.0.1:{porta}"},
                  corpo={"modelo": "gemini-2.5-flash"})[0] == 200
-    assert pedir(porta, "POST", "/api/config/naoexiste", cab={"X-CortesEX": "1"}, corpo={})[0] == 404
+    assert pedir(porta, "POST", "/api/config/naoexiste", cab={"X-CortesEX": tk}, corpo={})[0] == 404
     assert pedir(porta, "DELETE", "/api/estado")[0] == 405
     assert pedir(porta, "GET", "/video/999")[0] == 404
 

@@ -7,7 +7,7 @@ import requests
 from cortesex.plataformas import (AUTENTICACAO, CONTA, COTA, MIDIA, PERMISSAO, PROCESSAMENTO, TEMPORARIO,
                                   ErroPostagem, resultado, texto_post, titulo)
 
-V = "v21.0"
+V = "v26.0"          # v21.0 é removida pela Meta em 21/01/2027; v26.0 é a atual (jul/2026)
 GRAPH = f"https://graph.facebook.com/{V}"
 RUPLOAD = f"https://rupload.facebook.com/video-upload/{V}"
 

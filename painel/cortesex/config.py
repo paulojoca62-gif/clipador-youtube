@@ -177,9 +177,17 @@ class Config:
             # 1.x não tinha modos: quem já postava automático continua automático.
             self.dados["agendador"]["modo"] = "automatico" if self.dados["agendador"].get("ativo") else "semiautomatico"
             self.migracoes.append(f"modo do agendador definido como {self.dados['agendador']['modo']}")
-        self._migrar_segredos()
+        self.cofre_falhou = ""
+        try:
+            self._migrar_segredos()
+        except Exception as e:  # noqa: BLE001
+            # AUD-M7: cofre indisponível (DPAPI falhou). As chaves continuam no config.json, sem perda;
+            # o programa abre em modo degradado e avisa. Nada é apagado.
+            self.cofre_falhou = f"O cofre de chaves falhou ({type(e).__name__}); as chaves continuam no config.json."
+            self.migracoes.append("cofre indisponível: chaves mantidas no config.json (modo degradado)")
         for secao, chave in SEGREDOS:
             seguranca.registrar_segredo(self.cofre.get(secao, chave))
+            seguranca.registrar_segredo((self.dados.get(secao) or {}).get(chave) or "")
         if existia and self.migracoes:
             self._gravar()
 
@@ -203,7 +211,7 @@ class Config:
         if isinstance(valor, dict):
             for s, k in SEGREDOS:
                 if s == secao:
-                    valor[k] = self.cofre.get(s, k)
+                    valor[k] = self.cofre.get(s, k) or (valor.get(k) if self.cofre_falhou else "")
         if chave is None:
             return valor
         return valor.get(chave, padrao) if isinstance(valor, dict) else padrao
@@ -224,7 +232,13 @@ class Config:
                     else:
                         self.dados[secao][k] = v
                 if novos_segredos:
-                    self.cofre.definir(novos_segredos)
+                    try:
+                        self.cofre.definir(novos_segredos)
+                    except Exception:  # noqa: BLE001
+                        if not self.cofre_falhou:
+                            raise
+                        for k, v in novos_segredos.items():   # modo degradado: guarda no JSON, avisando
+                            self.dados[secao][k.split(".")[1]] = v
             else:
                 self.dados[secao] = valores
             if secao == "canais":
@@ -239,9 +253,10 @@ class Config:
     def _gravar(self) -> None:
         with self._lock:
             dados = copy.deepcopy(self.dados)
-        for secao, chave in SEGREDOS:     # nunca escreve chave no JSON
-            if secao in dados and chave in dados[secao]:
-                dados[secao][chave] = ""
+        if not self.cofre_falhou:
+            for secao, chave in SEGREDOS:     # nunca escreve chave no JSON (salvo no modo degradado)
+                if secao in dados and chave in dados[secao]:
+                    dados[secao][chave] = ""
         tmp = self.arquivo.with_suffix(".tmp")
         tmp.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, self.arquivo)
@@ -252,8 +267,8 @@ class Config:
             d = copy.deepcopy(self.dados)
         for secao, chave in SEGREDOS:
             if secao in d and chave in d[secao]:
-                d[secao][chave] = bool(self.cofre.get(secao, chave))
-        d["_cofre"] = {"cifrado": protegido(), "erro": self.cofre.erro}
+                d[secao][chave] = bool(self.cofre.get(secao, chave) or (self.cofre_falhou and d[secao][chave]))
+        d["_cofre"] = {"cifrado": protegido() and not self.cofre_falhou, "erro": self.cofre.erro or self.cofre_falhou}
         return d
 
     def canal(self, nome: str) -> dict | None:

@@ -21,10 +21,12 @@ _PADROES = [
     (re.compile(r"\b(act|rft)\.[0-9A-Za-z_\-\.!*]{10,}"), r"\1.***"),   # tokens do TikTok
     (re.compile(r"bot\d{5,}:[0-9A-Za-z_\-]{20,}"), "bot***"),            # token do bot do Telegram
     (re.compile(r"(?i)\b(bearer|oauth)\s+[0-9A-Za-z_\-\.~+/=]{12,}"), r"\1 ***"),
-    (re.compile(r"(?i)((?:access_token|refresh_token|client_secret|api_key|key|code|code_verifier|"
-                r"fb_exchange_token|token)=)[^&\s\"']+"), r"\1***"),
-    (re.compile(r"(?i)(\"(?:access_token|refresh_token|client_secret|api_key|page_token|bot_token)\"\s*:\s*\")"
-                r"[^\"]+"), r"\1***"),
+    (re.compile(r"\b4/0[0-9A-Za-z_\-]{10,}"), "4/0***"),                  # código OAuth do Google
+    (re.compile(r"(?i)((?:access_token|refresh_token|id_token|client_secret|api_key|key|code|code_verifier|"
+                r"fb_exchange_token|token|sig|password|senha)=)[^&\s\"']+"), r"\1***"),
+    (re.compile(r"(?i)(\"(?:access_token|refresh_token|id_token|client_secret|api_key|page_token|bot_token|code|"
+                r"code_verifier|password|token)\"\s*:\s*\")[^\"]+"), r"\1***"),
+    (re.compile(r"(?i)(x-goog-api-key|x-api-key|authorization)(\s*[:=]\s*)(?!bearer|oauth)[^\s,;]{12,}"), r"\1\2***"),
 ]
 
 _conhecidos: set[str] = set()
@@ -71,7 +73,11 @@ def hosts_validos(porta: int) -> set[str]:
 
 
 def host_permitido(host: str | None, porta: int) -> bool:
-    return (host or "").strip().lower() in hosts_validos(porta)
+    """Aceita só o painel: 127.0.0.1 ou localhost, na porta exata. Recusa vazio, IPs alternativos
+    (0.0.0.0, 127.1, 2130706433, [::1]), outras portas, ponto final, credenciais, espaços e controles."""
+    if not host or len(host) > 64 or not re.fullmatch(r"[A-Za-z0-9.:\-]+", host):
+        return False
+    return host.lower() in hosts_validos(porta)
 
 
 def origem_permitida(origem: str | None, porta: int) -> bool:
@@ -79,6 +85,11 @@ def origem_permitida(origem: str | None, porta: int) -> bool:
     if not origem:
         return True
     return origem.strip().lower() in {f"http://{h}" for h in hosts_validos(porta)}
+
+
+def fetch_site_permitido(valor: str | None) -> bool:
+    """Navegadores modernos dizem de onde veio o pedido; ações só de dentro do próprio painel."""
+    return not valor or valor.lower() in ("same-origin", "none")
 
 
 def dentro_de(caminho, pasta) -> bool:
@@ -90,6 +101,8 @@ def dentro_de(caminho, pasta) -> bool:
 
 
 CABECALHOS = {
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",

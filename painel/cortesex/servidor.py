@@ -58,6 +58,9 @@ class Painel:
         self.fb_paginas = {}     # id -> página (com token), da última consulta
         self.ao_encerrar = None
         self.verificadores = {}  # state -> code_verifier (PKCE do TikTok)
+        # Token anti-CSRF: aleatório por execução, só vai dentro da página servida com Host válido.
+        # Outro site não consegue lê-lo (mesma origem) nem enviar cabeçalho próprio sem CORS.
+        self.token = secrets.token_urlsafe(32)
 
     # ----- OAuth
     def novo_estado(self, plataforma):
@@ -317,28 +320,34 @@ class Painel:
                 for k, v in seguranca.CABECALHOS.items():
                     self.send_header(k, v)
 
-            def _json(self, dados, status=200):
+            def _json(self, dados, status=200, fechar=False):
                 b = json.dumps(dados, ensure_ascii=False, default=str).encode()
                 self.send_response(status)
+                if fechar:
+                    self.send_header("Connection", "close")
+                    self.close_connection = True
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(b)))
-                self.send_header("Cache-Control", "no-store")
                 self._cabecalhos()
                 self.end_headers()
                 self.wfile.write(b)
 
             def _arquivo(self, p: Path, tipo):
                 b = p.read_bytes()
+                if p.name == "index.html":
+                    b = b.replace(b"__CORTESEX_TOKEN__", painel.token.encode())
                 self.send_response(200)
                 self.send_header("Content-Type", tipo)
                 self.send_header("Content-Length", str(len(b)))
-                self.send_header("Cache-Control", "no-store")
                 self._cabecalhos()
                 self.end_headers()
                 self.wfile.write(b)
 
+            timeout = 30           # conexão parada não prende uma thread para sempre
+
             def _host_ok(self):
-                if seguranca.host_permitido(self.headers.get("Host"), painel.porta):
+                hosts = self.headers.get_all("Host") or []
+                if len(hosts) == 1 and seguranca.host_permitido(hosts[0], painel.porta):
                     return True
                 self._json({"erro": "host não permitido"}, 403)
                 return False
@@ -370,18 +379,35 @@ class Painel:
                     return self._json({"erro": seguranca.redigir(e)}, 500)
 
             def do_POST(self):
-                n = int(self.headers.get("Content-Length") or 0)
+                bruto_tam = self.headers.get("Content-Length")
+                if self.headers.get("Transfer-Encoding"):
+                    return self._json({"erro": "Transfer-Encoding não suportado"}, 411, fechar=True)
+                try:
+                    n = int(bruto_tam) if bruto_tam is not None else 0
+                except ValueError:
+                    n = -1
+                if n < 0:
+                    return self._json({"erro": "Content-Length inválido"}, 400, fechar=True)
                 if n > 2_000_000:
-                    return self._json({"erro": "pedido grande demais"}, 413)
+                    return self._json({"erro": "pedido grande demais"}, 413, fechar=True)
                 bruto = self.rfile.read(n) if n else b""
                 if not self._host_ok():
                     return
-                # Só o próprio painel manda esse cabeçalho; outro site não consegue sem CORS.
-                if self.headers.get("X-CortesEX") != "1" or \
-                        not seguranca.origem_permitida(self.headers.get("Origin"), painel.porta):
+                # CSRF: token da página + Origin (se vier) + Sec-Fetch-Site (se vier). Nenhum deles é login.
+                token = self.headers.get("X-CortesEX") or ""
+                if not secrets.compare_digest(token, painel.token) or \
+                        not seguranca.origem_permitida(self.headers.get("Origin"), painel.porta) or \
+                        not seguranca.fetch_site_permitido(self.headers.get("Sec-Fetch-Site")):
                     return self._json({"erro": "proibido"}, 403)
+                if "json" not in (self.headers.get("Content-Type") or "application/json").lower():
+                    return self._json({"erro": "use JSON"}, 415)
                 try:
                     corpo = json.loads(bruto or b"{}")
+                except (ValueError, UnicodeDecodeError):
+                    return self._json({"erro": "JSON inválido"}, 400)
+                if not isinstance(corpo, dict):
+                    return self._json({"erro": "o corpo precisa ser um objeto JSON"}, 400)
+                try:
                     return self._json(painel.post(urllib.parse.urlparse(self.path).path, corpo))
                 except KeyError as e:
                     return self._json({"erro": f"não encontrado: {seguranca.redigir(e)}"}, 404)
@@ -392,7 +418,11 @@ class Painel:
             def do_PUT(self):
                 return self._json({"erro": "método não permitido"}, 405)
 
-            do_DELETE = do_PATCH = do_PUT
+            do_DELETE = do_PATCH = do_OPTIONS = do_TRACE = do_CONNECT = do_PUT
+
+            def do_HEAD(self):
+                if self._host_ok():
+                    self._json({"erro": "método não permitido"}, 405)
 
             def _callback(self, q):
                 estado = (q.get("state") or [""])[0]

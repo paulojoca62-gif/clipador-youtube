@@ -170,10 +170,25 @@ def criterios(score_pico, sinal, limites, analise_ia, manual=False):
     return c
 
 
+def _num(v):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None   # NaN/inf = inválido
+
+
 def pontuar(crit: dict, pesos: dict | None = None) -> dict:
-    """Score 0–100 sobre os critérios conhecidos + confiança (quanto do peso total foi avaliado)."""
-    pesos = pesos or PESOS_PADRAO
-    total = sum(pesos.values()) or 1
+    """Nota 0–100 sobre os critérios avaliados + "confiança" = COBERTURA: fração do peso total que tinha dado.
+
+    Não é probabilidade de sucesso. Critério sem dado (None/ inválido) fica de fora; peso negativo,
+    não numérico ou de critério desconhecido vale 0; valores fora de 0–1 são limitados a 0–1.
+    """
+    pesos = {k: max(_num(v) or 0.0, 0.0) for k, v in (pesos or PESOS_PADRAO).items() if k in PESOS_PADRAO}
+    total = sum(pesos.values())
+    if total <= 0:
+        return {"score": None, "confianca": 0.0}
+    crit = {k: (None if _num(v) is None else _limitar(_num(v))) for k, v in (crit or {}).items()}
     conhecidos = {k: v for k, v in crit.items() if v is not None and pesos.get(k)}
     peso_conhecido = sum(pesos[k] for k in conhecidos)
     if not peso_conhecido:

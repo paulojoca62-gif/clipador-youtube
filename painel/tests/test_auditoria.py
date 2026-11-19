@@ -1,11 +1,10 @@
 """Testes da auditoria independente (pós-2.0). Cada um reproduz um cenário de falha controlado.
 
-Os marcados xfail(strict=True) documentam problemas MÉDIOS/BAIXOS registrados e ainda não corrigidos:
-se alguém corrigir, o teste passa a falhar por "XPASS" e precisa virar teste normal.
+Os antigos xfail (M1, M2, M3, L1) foram corrigidos na rodada CORRECAO_AUDITORIA_FINAL e viraram testes
+comportamentais normais. Não há mais xfail no projeto.
 """
 import json
 import shutil
-import sqlite3
 import threading
 import time
 
@@ -138,9 +137,13 @@ def test_banco_corrompido_nao_e_sobrescrito(tmp_path):
     arq = tmp_path / "cortesex.db"
     arq.write_bytes(b"isto nao e um banco sqlite" * 100)
     original = arq.read_bytes()
-    with pytest.raises(sqlite3.DatabaseError):
+    (tmp_path / "backups").mkdir()
+    boa = tmp_path / "backups" / "cortesex-antes-da-migracao-x.db"
+    D.Banco(boa).con.close()
+    with pytest.raises(D.BancoCorrompido) as e:
         D.Banco(arq, tmp_path / "backups")
-    assert arq.read_bytes() == original
+    assert arq.read_bytes() == original                       # não mexeu no arquivo danificado
+    assert e.value.backups == [boa]                           # oferece o backup para restaurar
 
 
 def test_backup_de_atualizacao_restaura(tmp_path, monkeypatch):
@@ -163,13 +166,17 @@ def test_backup_de_atualizacao_restaura(tmp_path, monkeypatch):
 
 
 def test_falha_no_cofre_durante_migracao_nao_perde_chaves(tmp_path, monkeypatch):
+    """AUD-M7: DPAPI falhando na migração → abre em modo degradado, chaves continuam no JSON e funcionando."""
     antigo = {"gemini": {"api_key": "AIza-nao-perder-123456", "modelo": "m"}}
     (tmp_path / "config.json").write_text(json.dumps(antigo))
     from cortesex import segredos
     monkeypatch.setattr(segredos.Cofre, "definir", lambda self, v: (_ for _ in ()).throw(OSError("DPAPI falhou")))
-    with pytest.raises(OSError):
-        cfgmod.Config(tmp_path / "config.json")
-    assert json.loads((tmp_path / "config.json").read_text()) == antigo
+    c = cfgmod.Config(tmp_path / "config.json")
+    assert c.cofre_falhou and c.get("gemini", "api_key") == "AIza-nao-perder-123456"
+    assert json.loads((tmp_path / "config.json").read_text())["gemini"]["api_key"] == "AIza-nao-perder-123456"
+    assert c.publico()["gemini"]["api_key"] is True and c.publico()["_cofre"]["erro"]
+    c.salvar("gemini", {"modelo": "outro"})                  # salvar no modo degradado não apaga a chave
+    assert cfgmod.Config(tmp_path / "config.json").get("gemini", "api_key") == "AIza-nao-perder-123456"
 
 
 # ---------------------------------------------------------------- segurança
@@ -207,36 +214,132 @@ def servidor_e_motor(ambiente):
     srv.shutdown()
 
 
-# ---------------------------------------------------------------- problemas registrados (não corrigidos)
-@pytest.mark.xfail(strict=True, reason="AUD-M1: disco baixo só impede NOVAS gravações; a gravação em andamento continua")
-def test_disco_baixo_interrompe_gravacao_em_andamento():
-    import inspect
-    from cortesex import gravador
-    fonte = inspect.getsource(gravador.Canal._gravar_uma_vez)
-    assert "pode_gravar" in fonte
+# ---------------------------------------------------------------- M1, M2, M3, L1 (antes xfail; agora corrigidos)
+def _gravador_falso(tmp_path, monkeypatch):
+    """Um 'streamlink' de mentira que manda vídeo MPEG-TS de verdade (ffmpeg) para a saída padrão."""
+    import sys
+    from cortesex import util
+    script = tmp_path / "streamlink_falso.py"
+    script.write_text(
+        "import subprocess, sys\n"
+        f"subprocess.run([{util.ffmpeg()!r}, '-v', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=15',"
+        " '-f', 'lavfi', '-i', 'sine=frequency=440', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '15',"
+        " '-c:a', 'aac', '-f', 'mpegts', 'pipe:1'], stdout=sys.stdout.buffer)\n")
+    monkeypatch.setattr(util, "comando_streamlink", lambda: [sys.executable, str(script)])
 
 
-@pytest.mark.xfail(strict=True, reason="AUD-M2: o editor aceita remontar um corte que o pipeline ainda está processando")
+def test_disco_baixo_interrompe_gravacao_em_andamento(tmp_path, monkeypatch):
+    """AUD-M1: com a gravação rodando, o disco 'acaba' → a gravação para e os processos fecham."""
+    from cortesex.gravador import Canal
+    _gravador_falso(tmp_path, monkeypatch)
+    cfg = cfgmod.Config(tmp_path / "config.json")
+    espaco = {"ok": True}
+    canal = Canal({"nome": "teste"}, cfg, tmp_path, lambda job: None, pode_gravar=lambda: espaco["ok"])
+    def gravar():
+        try:
+            canal._gravar_uma_vez("best")
+        except RuntimeError:
+            pass                                               # sessão curta: o gravador avisa "sem live agora"
+    t = threading.Thread(target=gravar, daemon=True)
+    t.start()
+    for _ in range(200):
+        if len(canal.segmentos()) >= 2:
+            break
+        time.sleep(0.1)
+    assert len(canal.segmentos()) >= 2, "a gravação de teste não começou"
+    espaco["ok"] = False
+    t.join(timeout=15)
+    assert not t.is_alive(), "a gravação continuou com pouco disco"
+    assert canal._fluxo.poll() is not None and canal._ff.poll() is not None
+    n = len(canal.segmentos())
+    time.sleep(5)
+    assert len(canal.segmentos()) <= n + 1                     # nada mais está sendo escrito
+
+
 def test_remontar_recusa_corte_em_processamento(ambiente):
+    """AUD-M2: o editor não remonta um corte que o pipeline está processando."""
     m, pasta = ambiente
     cid = m.banco.novo_candidato("a", pasta / "x.mp4", time.time(), 3, "p", [], time.time(), time.time())
     m.banco.mudar_estado(cid, D.MONTANDO)
     (pasta / "x_fonte.mp4").write_bytes(b"x")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="montando"):
         m.remontar(cid)
+    assert m.banco.corte(cid)["estado"] == D.MONTANDO
 
 
-@pytest.mark.xfail(strict=True, reason="AUD-M3: a limpeza do buffer não protege blocos de cortes detectados ainda não capturados")
+def test_editor_reserva_o_corte_enquanto_monta(real_pipeline):
+    """AUD-M2: durante a remontagem o corte fica 'montando' (o pipeline não o pega) e volta ao estado de antes."""
+    m, cid = real_pipeline
+    m.banco.aprovar(cid)
+    vistos = []
+    original = m._montar
+
+    def espiao(c, *a, **k):
+        vistos.append(m.banco.corte(cid)["estado"])
+        vistos.append(m.processar_proximo())                  # um worker tentando pegar algo nesse momento
+        return original(c, *a, **k)
+    m._montar = espiao
+    m.remontar(cid, segmentos=[{"ini": 0, "fim": 2, "texto": "EDITADO"}])
+    assert vistos == [D.MONTANDO, False]
+    assert m.banco.corte(cid)["estado"] == D.APROVADO
+
+
+def test_editor_falha_mantem_estado_e_video(real_pipeline, monkeypatch):
+    m, cid = real_pipeline
+    antes = m.banco.corte(cid)
+    video = open(antes["arquivo"], "rb").read()
+    monkeypatch.setattr(m.render, "montar", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ffmpeg caiu")))
+    with pytest.raises(RuntimeError):
+        m.remontar(cid, segmentos=[{"ini": 0, "fim": 2, "texto": "X"}])
+    assert m.banco.corte(cid)["estado"] == antes["estado"]
+    assert open(antes["arquivo"], "rb").read() == video
+
+
 def test_limpeza_do_buffer_protege_candidatos_pendentes(ambiente):
-    import inspect
-    from cortesex import gravador
-    assert "protegido" in inspect.getsource(gravador.Canal.limpar)
+    """AUD-M3: blocos de um corte detectado e ainda não capturado não são apagados pela limpeza."""
+    from cortesex.gravador import FORMATO_BLOCO, Canal
+    m, pasta = ambiente
+    canal = Canal({"nome": "alanzoka"}, m.config, pasta, m.agendar_corte)
+    m.canais["alanzoka"] = canal
+    velho = time.time() - 40 * 60                               # 40 min atrás (buffer = 15 min)
+    for i in range(10):
+        (canal.dir_seg / (time.strftime(FORMATO_BLOCO, time.localtime(velho + 4 * i)) + ".ts")).write_bytes(b"x")
+    cid = m.banco.novo_candidato("alanzoka", pasta / "c.mp4", velho + 20, 3, "p", [], velho, velho + 36)
+    m.config.salvar("armazenamento", {"minimo_livre_gb": 0})
+    m.limpar()
+    assert len(canal.segmentos()) == 10                         # protegidos
+    m.banco.mudar_estado(cid, D.CAPTURADO)
+    m.limpar()
+    assert len(canal.segmentos()) == 0                          # capturado: podem sair
 
 
-@pytest.mark.xfail(strict=True, reason="AUD-L1: a permissão 'editar' é registrada mas não bloqueia o editor")
-def test_permissao_editar_e_aplicada(ambiente):
-    import inspect
-    assert "editar" in inspect.getsource(motormod.Motor.remontar)
+def test_permissao_editar_e_aplicada(real_pipeline):
+    """AUD-L1: autorização com editar=False bloqueia o editor."""
+    m, cid = real_pipeline
+    autorizar(m, editar=False)
+    with pytest.raises(ValueError, match="editar"):
+        m.remontar(cid, segmentos=[{"ini": 0, "fim": 2, "texto": "X"}])
+
+
+@pytest.fixture
+def real_pipeline(tmp_path, monkeypatch):
+    from test_pipeline import gravar_blocos
+    from cortesex import midia
+    monkeypatch.setenv("CORTESEX_DADOS", str(tmp_path))
+    c = cfgmod.Config(tmp_path / "config.json")
+    c.salvar("corte", {"adaptativo": True, "duracao_min": 10, "duracao_max": 30})
+    m = motormod.Motor(config=c, pasta=tmp_path)
+    falas = [(1.0, 1.5, "Olha"), (6.0, 7.0, "isso."), (18.0, 19.0, "Meu"), (19.1, 19.6, "Deus!"), (31.0, 31.5, "Fim.")]
+    monkeypatch.setattr(m.render, "transcrever",
+                        lambda fonte, nome="small": (falas, midia.perfil_audio(midia.ler_audio(fonte))))
+    inicio = time.time() - 200
+    gravar_blocos(tmp_path, "alanzoka", inicio, 40)
+    cid = m.banco.novo_candidato("alanzoka", tmp_path / "cortes" / "alanzoka" / "e.mp4", inicio + 20, 3.0, "p",
+                                 [], inicio, inicio + 36)
+    while m.processar_proximo(agora=time.time()):
+        pass
+    assert m.banco.corte(cid)["estado"] == D.REVISAO
+    return m, cid
 
 
 def test_processo_de_gravacao_morre_junto_com_o_programa(tmp_path):

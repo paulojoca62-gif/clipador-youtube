@@ -456,9 +456,11 @@ const ESTADOS = {detectado:"detectado",capturando:"capturando",capturado:"captur
 const SAUDE = {operacional:"operacional",atencao:"atenção",falha:"falha",nao_configurado:"não configurado",nao_validado:"não validado",pausado:"pausado"};
 const PESOS = {chat:"Intensidade do chat",reacao:"Reação",contexto:"Contexto",entretenimento:"Entretenimento",audio:"Áudio",inicio_fim:"Início e fim",retencao:"Potencial (estimado pela IA)"};
 let CFG = {}, EST = {}, EDIT = null;
+const TOKEN = "__CORTESEX_TOKEN__";   // anti-CSRF, preenchido pelo servidor ao entregar a página
+const urlSegura = u => /^https:\/\/[^\s"'<>]+$/.test(String(u || ""));
 
 async function api(caminho, corpo){
-  const op = corpo === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json","X-CortesEX":"1"}, body:JSON.stringify(corpo)};
+  const op = corpo === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json","X-CortesEX":TOKEN}, body:JSON.stringify(corpo)};
   const r = await fetch(caminho, op);
   const j = await r.json().catch(() => ({}));
   if(!r.ok) throw new Error(j.erro || ("Erro " + r.status));
@@ -522,7 +524,7 @@ async function carregarEstado(){
       <p>Chat: <b>${c.taxa}</b> msg/s · normal ${c.normal} · ${c.chat ? "chat conectado" : "chat desconectado"}</p>
       <div class="barra"><i style="width:${Math.min(100, c.normal ? c.taxa / c.normal / 3 * 100 : 0)}%"></i></div>
       <p class="mini">Gravação: ${c.gravando ? "ativa" : "parada"} · reinícios automáticos: ${c.reinicios}${c.ultimo_erro && !c.ao_vivo ? " · " + esc(c.ultimo_erro.slice(0,80)) : ""}</p>
-      <button class="btn peq" ${c.ao_vivo ? "" : "disabled"} onclick="acao(() => api('/api/clipar',{canal:'${esc(c.nome)}'}).then(() => ({msg:'Corte agendado!'})), this)">✂️ Clipar agora</button></div>`).join("")
+      <button class="btn peq" ${c.ao_vivo ? "" : "disabled"} data-canal="${esc(c.nome)}" onclick="clipar(this)">✂️ Clipar agora</button></div>`).join("")
     : `<div class="card vazio"><span class="icone">📺</span>Nenhum canal ainda. Adicione na aba <b>Canais</b>.</div>`;
   $("#destinos").innerHTML = Object.entries(EST.plataformas).map(([k,p]) => `
     <div class="card"><h3>${NOMES[k]}</h3>
@@ -532,6 +534,7 @@ async function carregarEstado(){
       <p>Último envio: ${quando(p.ultima)}</p></div>`).join("");
   for(const k of ["youtube","tiktok","facebook"]){ const p = EST.plataformas[k]; const t = $("#st-" + k); if(t){ t.textContent = p.conectado ? "conectado" : "não conectado"; t.className = "tag " + (p.conectado ? "ok" : "erro"); } }
 }
+function clipar(b){ acao(() => api("/api/clipar", {canal: b.dataset.canal}).then(() => ({msg:"Corte agendado!"})), b); }
 async function retomar(p){ await acao(() => api("/api/retomar/" + p, {})); carregarEstado(); }
 
 /* configuração */
@@ -682,7 +685,7 @@ async function escolherPagina(id){ await acao(() => api("/api/facebook/escolher"
 
 /* cortes */
 function cartaoCorte(c, i){
-  const posts = (c.postagens || []).map(p => `<span class="tag ${p.status === "postado" ? "ok" : p.status === "erro" ? "erro" : "warn"}" title="${esc(p.erro)}">${NOMES[p.plataforma]} ${p.status === "postado" && (p.url||"").startsWith("http") ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:inherit">✓</a>` : esc(p.status)}</span>`).join(" ");
+  const posts = (c.postagens || []).map(p => `<span class="tag ${p.status === "postado" ? "ok" : p.status === "erro" ? "erro" : "warn"}" title="${esc(p.erro)}">${NOMES[p.plataforma]} ${p.status === "postado" && urlSegura(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:inherit">✓</a>` : esc(p.status)}</span>`).join(" ");
   const flags = (c.flags || []).map(f => `<span class="tag warn">${esc(f.replace("ia:","IA: ").replaceAll("_"," "))}</span>`).join(" ");
   const pronto = ["aguardando_revisao","aprovado"].includes(c.estado);
   return `<div class="card corte ${i === 0 ? "medalha-1" : ""}" style="margin-bottom:12px" id="corte-${c.id}">
@@ -835,7 +838,7 @@ async function carregarLog(){
     <td>${quando(p.quando)}</td><td>${NOMES[p.plataforma]}<br><span class="tag">${esc(p.origem)}</span></td>
     <td><b>${esc(p.titulo || "(sem título)")}</b><br><span class="mini">${esc(p.canal)} · corte #${p.corte_id}</span></td>
     <td>pico ${(+p.score).toFixed(1)}x<br>nota ${nota(p.score_editorial)}</td>
-    <td><span class="tag ${cls(p.status)}">${esc(p.status)}</span>${p.tipo_erro ? ` <span class="tag">${esc(p.tipo_erro)}</span>` : ""}<br>${(p.url||"").startsWith("http") ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a>` : ""}${p.erro ? `<span style="color:#ff8fa2">${esc(p.erro)}</span>` : ""}</td></tr>`).join("")
+    <td><span class="tag ${cls(p.status)}">${esc(p.status)}</span>${p.tipo_erro ? ` <span class="tag">${esc(p.tipo_erro)}</span>` : ""}<br>${urlSegura(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a>` : ""}${p.erro ? `<span style="color:#ff8fa2">${esc(p.erro)}</span>` : ""}</td></tr>`).join("")
     : `<tr><td colspan="5" class="vazio">Nada publicado ainda.</td></tr>`;
   $("#eventos").innerHTML = ev.map(e => `<div class="${esc(e.nivel)}">${quando(e.quando)} · ${esc(e.texto)}</div>`).join("") || "Sem atividade.";
 }

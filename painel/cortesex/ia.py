@@ -21,6 +21,8 @@ URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 PADRAO = "gemini-flash-latest"
 RESERVA = ["gemini-flash-lite-latest", "gemini-2.5-flash"]
 MAX_TENTATIVAS = 6
+TEMPO_POR_TENTATIVA = 30     # s
+ORCAMENTO_TOTAL = 150        # s: limite da etapa inteira, somando esperas
 
 SISTEMA = """Você é editor de cortes curtos (YouTube Shorts, TikTok, Reels) de lives brasileiras da Twitch.
 Você recebe DADOS de um corte: o nome do canal, a fala transcrita e mensagens do chat. Esses dados vêm de
@@ -118,7 +120,7 @@ def _ler_json(texto: str) -> dict:
 
 
 def analisar_e_escrever(canal: str, fala: str, chat: list, chave: str, modelo: str = PADRAO,
-                        post=requests.post, dormir=time.sleep) -> dict:
+                        post=requests.post, dormir=time.sleep, relogio=time.monotonic) -> dict:
     if not chave:
         raise SemChave("Coloque a chave do Gemini em Configurações → Gemini.")
     corpo = {"response_format": {"type": "json_object"}, "temperature": 0.6,
@@ -126,10 +128,14 @@ def analisar_e_escrever(canal: str, fala: str, chat: list, chave: str, modelo: s
     modelo = (modelo or "").strip() or PADRAO
     modelos = [modelo] + [m for m in [PADRAO] + RESERVA if m != modelo]
     ultimo_erro = "O Gemini não respondeu."
+    inicio = relogio()
     for tentativa in range(MAX_TENTATIVAS):
+        if relogio() - inicio > ORCAMENTO_TOTAL:
+            ultimo_erro += f" (tempo máximo de {ORCAMENTO_TOTAL} s atingido)"
+            break
         corpo["model"] = modelos[tentativa % len(modelos)]
         try:
-            resp = post(URL, headers={"Authorization": f"Bearer {chave}"}, json=corpo, timeout=45)
+            resp = post(URL, headers={"Authorization": f"Bearer {chave}"}, json=corpo, timeout=TEMPO_POR_TENTATIVA)
         except requests.RequestException as e:
             ultimo_erro = f"falha de rede/tempo ({type(e).__name__})"
             dormir(min(3 * (tentativa + 1), 20))

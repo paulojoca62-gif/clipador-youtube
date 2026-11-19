@@ -117,6 +117,20 @@ def testar(cfg: dict) -> str:
             f"Privacidade permitida: {', '.join(d.get('privacy_level_options') or [])}")
 
 
+PARTE = 10_000_000            # bytes por parte quando o vídeo é grande
+LIMITE_UMA_PARTE = 64_000_000
+
+
+def plano_de_partes(tamanho: int) -> dict:
+    """Media Transfer Guide: total_chunk_count = tamanho // chunk_size (para baixo); a última parte leva o resto.
+    Arquivo até 64 MB vai numa parte só (chunk_size = tamanho)."""
+    if tamanho <= LIMITE_UMA_PARTE:
+        return {"chunk_size": tamanho, "total": 1, "faixas": [(0, tamanho - 1)]}
+    total = tamanho // PARTE
+    faixas = [(i * PARTE, (i + 1) * PARTE - 1) for i in range(total - 1)] + [((total - 1) * PARTE, tamanho - 1)]
+    return {"chunk_size": PARTE, "total": total, "faixas": faixas}
+
+
 def postar(cfg: dict, corte: dict) -> dict:
     d = info(cfg)
     opcoes = d.get("privacy_level_options") or ["SELF_ONLY"]
@@ -124,24 +138,30 @@ def postar(cfg: dict, corte: dict) -> dict:
         "PUBLIC_TO_EVERYONE" if "PUBLIC_TO_EVERYONE" in opcoes else opcoes[0])
     arq = corte["arquivo"]
     tamanho = os.path.getsize(arq)
+    partes = plano_de_partes(tamanho)
     legenda_tt = (corte.get("textos_plataforma") or {}).get("tiktok")
     legenda = f"{titulo(corte)}\n\n{texto_post(corte, limite=2000, legenda=legenda_tt)}"[:2200]
     ini = _api(cfg, "/post/publish/video/init/", {
         "post_info": {"title": legenda, "privacy_level": privacidade, "disable_comment": False,
                       "disable_duet": False, "disable_stitch": False},
-        "source_info": {"source": "FILE_UPLOAD", "video_size": tamanho, "chunk_size": tamanho,
-                        "total_chunk_count": 1}})
+        "source_info": {"source": "FILE_UPLOAD", "video_size": tamanho, "chunk_size": partes["chunk_size"],
+                        "total_chunk_count": partes["total"]}})
     publish_id = ini.get("publish_id", "")
-    try:
-        with open(arq, "rb") as f:
-            r = requests.put(ini["upload_url"], data=f, timeout=900, headers={
-                "Content-Type": "video/mp4", "Content-Length": str(tamanho),
-                "Content-Range": f"bytes 0-{tamanho - 1}/{tamanho}"})
-    except requests.RequestException as e:
-        raise ErroPostagem(f"TikTok: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO,
-                           incerto=True) from e
-    if r.status_code not in (200, 201):
-        raise ErroPostagem(f"TikTok: falha no envio do vídeo ({r.status_code})", True, TEMPORARIO, retry_after(r))
+    with open(arq, "rb") as f:
+        for ini_b, fim_b in partes["faixas"]:
+            f.seek(ini_b)
+            bloco = f.read(fim_b - ini_b + 1)
+            try:
+                r = requests.put(ini["upload_url"], data=bloco, timeout=900, headers={
+                    "Content-Type": "video/mp4", "Content-Length": str(len(bloco)),
+                    "Content-Range": f"bytes {ini_b}-{fim_b}/{tamanho}"})
+            except requests.RequestException as e:
+                ultima = fim_b == tamanho - 1     # só a última parte pode ter completado o envio
+                raise ErroPostagem(f"TikTok: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO,
+                                   incerto=ultima) from e
+            if r.status_code not in (200, 201, 206):
+                raise ErroPostagem(f"TikTok: falha no envio do vídeo ({r.status_code})", True, TEMPORARIO,
+                                   retry_after(r))
     usuario = d.get("creator_username") or cfg.get("usuario") or ""
     detalhe = "" if privacidade == "PUBLIC_TO_EVERYONE" else f"privacidade {privacidade}"
     return resultado(f"https://www.tiktok.com/@{usuario}" if usuario else "", publish_id, "processando", detalhe)

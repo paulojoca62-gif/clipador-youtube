@@ -49,9 +49,19 @@ def main(abrir_navegador: bool = True):
     copia = backup_se_mudou(pasta_dados())
     if copia:
         logging.getLogger("cortesex").info("versão nova: backup da configuração e do banco em %s", copia.name)
+    from cortesex.db import BancoCorrompido
     from cortesex.motor import Motor
     from cortesex.servidor import Painel
-    motor = Motor()
+    try:
+        motor = Motor()
+    except BancoCorrompido as e:
+        logging.getLogger("cortesex").error("%s Abrindo o modo de recuperação.", e)
+        from cortesex import recuperacao
+        recuperacao.servir(e, PORTA)
+        if abrir_navegador and "--sem-navegador" not in sys.argv:
+            webbrowser.open(url)
+        while True:
+            time.sleep(3600)
     painel = Painel(motor)
     painel.iniciar()
     motor.iniciar()

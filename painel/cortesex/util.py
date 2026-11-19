@@ -110,10 +110,16 @@ def _morrer_com_o_pai():
 
 
 def popen_vinculado(cmd, **kw) -> subprocess.Popen:
-    """Popen de processo longo (gravação) que não sobrevive ao CortesEX-PRESS, nem se ele for morto à força."""
+    """Popen de processo longo (gravação) que não sobrevive ao CortesEX-PRESS, nem se ele for morto à força.
+    Cada um ganha o próprio grupo de processos, para `matar_arvore` levar junto os filhos dele."""
+    flags = SEM_JANELA
     if sys.platform.startswith("linux"):
         kw.setdefault("preexec_fn", _morrer_com_o_pai)
-    proc = subprocess.Popen(cmd, creationflags=SEM_JANELA, **kw)
+    if sys.platform == "win32":
+        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kw.setdefault("start_new_session", True)
+    proc = subprocess.Popen(cmd, creationflags=flags, **kw)
     if sys.platform == "win32":
         try:
             k32, job = _job_windows()
@@ -123,6 +129,30 @@ def popen_vinculado(cmd, **kw) -> subprocess.Popen:
             import logging
             logging.getLogger("cortesex").warning("não consegui vincular o processo filho ao programa: %s", e)
     return proc
+
+
+def matar_arvore(proc, espera=5) -> None:
+    """Encerra o processo e todos os que ele abriu, e espera terminar (sem deixar zumbi)."""
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True,
+                           creationflags=SEM_JANELA, timeout=15)
+        else:
+            import os
+            import signal
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=espera)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def rodar(cmd, timeout=None, **kw) -> subprocess.CompletedProcess:
