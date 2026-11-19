@@ -17,15 +17,15 @@ from pathlib import Path
 
 from cortesex import MAX_CANAIS, NOME, PORTA, VERSAO, analytics, diagnostico, editorial, ia, seguranca
 from cortesex.config import STATUS_AUTORIZACAO, normalizar_canal
-from cortesex.motor import NOMES, arquivos
-from cortesex.plataformas import facebook, telegram, tiktok, youtube
+from cortesex.motor import NOMES, arquivos, via_zernio
+from cortesex.plataformas import facebook, telegram, tiktok, youtube, zernio
 from cortesex.render import CAM_PRESETS, cam_valida
 from cortesex.util import pasta_app
 
 log = logging.getLogger("cortesex")
 WEB = pasta_app() / "web"
 SECOES = ("gravacao", "deteccao", "agendador", "youtube", "tiktok", "facebook", "gemini", "telegram",
-          "corte", "legendas", "pontuacao", "processamento", "armazenamento", "analytics", "atualizacoes")
+          "corte", "legendas", "pontuacao", "processamento", "armazenamento", "analytics", "atualizacoes", "zernio")
 
 
 def extrair_codigo(texto: str) -> tuple[str, str]:
@@ -287,6 +287,24 @@ class Painel:
             return {"ok": True, "msg": self.concluir_login(mm.group(1), codigo, estado)}
         if caminho == "/api/youtube/testar":
             return {"msg": youtube.testar(cfg.get("youtube"))}
+        if caminho == "/api/zernio/contas":
+            if corpo.get("api_key"):
+                cfg.salvar("zernio", {"api_key": corpo["api_key"]})
+            contas = zernio.listar_contas(cfg.get("zernio", "api_key"))
+            return {"contas": contas, "msg": f"{len(contas)} conta(s) de TikTok/Facebook no Zernio"}
+        if caminho == "/api/zernio/escolher":
+            contas = {c["id"]: c for c in zernio.listar_contas(cfg.get("zernio", "api_key"))}
+            escolha, nomes = {}, {}
+            for rede in zernio.REDES:
+                cid = str(corpo.get(rede) or "")
+                if cid and (cid not in contas or contas[cid]["plataforma"] != rede):
+                    raise ValueError(f"conta inválida para {NOMES[rede]}")
+                escolha[rede] = cid
+                nomes[rede] = (contas[cid]["usuario"] or contas[cid]["nome"]) if cid else ""
+            cfg.salvar("zernio", {"contas": escolha, "nomes": nomes})
+            return {"ok": True, "msg": "Contas do Zernio salvas"}
+        if caminho in ("/api/tiktok/testar", "/api/facebook/testar") and via_zernio(cfg, caminho.split("/")[2]):
+            return {"msg": zernio.Rede(caminho.split("/")[2], cfg).testar()}
         if caminho == "/api/tiktok/testar":
             t = cfg.get("tiktok")
             novo = tiktok.renovar(t)

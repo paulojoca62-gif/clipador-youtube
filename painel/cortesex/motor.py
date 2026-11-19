@@ -23,7 +23,7 @@ from cortesex.config import Config, pasta_dados
 from cortesex.db import Banco
 from cortesex.gravador import Canal, listar_segmentos
 from cortesex.plataformas import (COTA, EXIGEM_USUARIO, MIDIA, PERMANENTE, PROCESSAMENTO, TEMPORARIO,
-                                  ErroPostagem, facebook, telegram, tiktok, youtube)
+                                  ErroPostagem, facebook, telegram, tiktok, youtube, zernio)
 from cortesex.render import ErroEtapa, Renderizador, capturar, meta_json
 
 log = logging.getLogger("cortesex")
@@ -45,7 +45,19 @@ class LogNoBanco(logging.Handler):
             pass
 
 
+def via_zernio(config: Config, plataforma: str) -> bool:
+    return plataforma in zernio.REDES and config.get(plataforma, "via") == "zernio"
+
+
+def modulo(config: Config, plataforma: str):
+    """Destino da postagem: a integração direta ou, se escolhido, o Zernio."""
+    return zernio.Rede(plataforma, config) if via_zernio(config, plataforma) else PLATAFORMAS[plataforma]
+
+
 def conectado(config: Config, plataforma: str) -> bool:
+    if via_zernio(config, plataforma):
+        z = config.get("zernio")
+        return bool(z.get("api_key") and (z.get("contas") or {}).get(plataforma))
     c = config.get(plataforma)
     if plataforma in ("youtube", "tiktok"):
         return bool(c.get("refresh_token"))
@@ -535,7 +547,7 @@ class Motor:
 
     # ----- postagem
     def postar(self, corte: dict, plataforma: str, origem="agendador", forcar=False, ignorar_autorizacao=False):
-        mod = PLATAFORMAS[plataforma]
+        mod = modulo(self.config, plataforma)
         # AUD-H1: conferir "já postado" e registrar o envio é uma operação só (agendador x botão x clique duplo)
         with self._lock_reserva:
             if not forcar:
@@ -559,12 +571,12 @@ class Motor:
             except midia.MidiaInvalida as e:
                 raise ErroPostagem(f"vídeo inválido: {e}", False, MIDIA) from e
             cfg = self.config.get(plataforma)
-            if plataforma == "tiktok":
+            if plataforma == "tiktok" and not via_zernio(self.config, plataforma):
                 novo = tiktok.renovar(cfg)
                 if novo:
                     self.config.salvar("tiktok", novo)
                     cfg.update(novo)
-            res = mod.postar(cfg, corte)
+            res = mod.postar(cfg, {**corte, "_postagem": pid})
             if isinstance(res, str):
                 res = {"url": res, "ext_id": "", "status": "postado", "detalhe": ""}
         except Exception as e:  # noqa: BLE001
@@ -705,13 +717,13 @@ class Motor:
         agora = agora or time.time()
         n = 0
         for p in self.banco.postagens_status("processando"):
-            mod = PLATAFORMAS.get(p["plataforma"])
+            mod = modulo(self.config, p["plataforma"]) if p["plataforma"] in PLATAFORMAS else None
             if not mod or not hasattr(mod, "verificar") or not p.get("ext_id"):
                 self.banco.fim_postagem(p["id"], "postado", url=p["url"], detalhe="sem verificação disponível")
                 continue
             try:
                 cfg = self.config.get(p["plataforma"])
-                if p["plataforma"] == "tiktok":
+                if p["plataforma"] == "tiktok" and not via_zernio(self.config, "tiktok"):
                     novo = tiktok.renovar(cfg)
                     if novo:
                         self.config.salvar("tiktok", novo)

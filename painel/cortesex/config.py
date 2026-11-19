@@ -21,7 +21,7 @@ SEGREDOS = {
     ("youtube", "client_secret"), ("youtube", "refresh_token"),
     ("tiktok", "client_secret"), ("tiktok", "refresh_token"), ("tiktok", "access_token"),
     ("facebook", "page_token"), ("facebook", "app_secret"),
-    ("gemini", "api_key"), ("telegram", "bot_token"),
+    ("gemini", "api_key"), ("telegram", "bot_token"), ("zernio", "api_key"),
 }
 
 MODOS = ("manual", "semiautomatico", "automatico")
@@ -120,9 +120,11 @@ PADRAO = {
     },
     "youtube": {"client_id": "", "client_secret": "", "refresh_token": "", "canal": "", "redirect_uri": "",
                 "privacidade": "public", "categoria": "20"},
-    "tiktok": {"client_key": "", "client_secret": "", "refresh_token": "", "access_token": "",
+    "zernio": {"api_key": "", "contas": {"tiktok": "", "facebook": ""}, "nomes": {"tiktok": "", "facebook": ""}},
+    "tiktok": {"via": "direto",        # direto | zernio
+               "client_key": "", "client_secret": "", "refresh_token": "", "access_token": "",
                "expira_em": 0, "usuario": "", "redirect_uri": "", "privacidade": ""},
-    "facebook": {"app_id": "", "app_secret": "", "page_id": "", "page_nome": "", "page_token": ""},
+    "facebook": {"via": "direto", "app_id": "", "app_secret": "", "page_id": "", "page_nome": "", "page_token": ""},
     "gemini": {"api_key": "", "modelo": "gemini-flash-latest"},
     "telegram": {"bot_token": "", "chat_id": "", "avisar_postagem": True, "avisar_erro": True,
                  "revisar_pelo_telegram": True,   # corte pronto chega com vídeo e botões Aprovar/Descartar/Postar

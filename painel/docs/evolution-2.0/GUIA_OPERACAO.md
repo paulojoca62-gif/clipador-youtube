@@ -27,3 +27,26 @@ Cada build é tentado no máximo 3 vezes; depois disso o painel pede a instalaç
 em `<pasta de dados>\atualizacoes\` (`estado.json`, `ultima_instalacao.txt` com o código de saída do
 instalador e o log da instalação). Só os programas instalados a partir do build com o atualizador em diante
 se atualizam sozinhos; a instalação anterior a ele precisa ser feita à mão uma última vez.
+
+## Revisão pelo Telegram
+
+Configurações → Contas → Telegram → **Revisar pelo Telegram**. Cada corte que fica "aguardando revisão"
+chega no chat configurado com o vídeo (até 50 MB) e os botões **✅ Aprovar**, **❌ Descartar** e
+**🚀 Postar agora** (nas redes ligadas no Agendador). Só o chat configurado comanda; os botões são
+assinados (HMAC) e um toque repetido não repete a ação. Funciona enquanto o programa estiver aberto.
+
+## TikTok e Facebook via Zernio
+
+Para publicar sem app próprio (o TikTok só deixa app próprio postar em público depois da auditoria):
+1. Crie a conta em zernio.com e conecte lá o TikTok (entra pelo TikTok for Business) e a Página do Facebook.
+2. Gere uma chave de API no Zernio; em Configurações → Contas → **Zernio**, cole a chave e clique
+   **Salvar e buscar contas**; escolha a conta do TikTok e a Página; **Salvar contas**.
+3. No cartão do TikTok e/ou do Facebook, mude **Conexão** para **Via Zernio** e salve.
+
+- TikTok: publica em **público**, até 15 vídeos por conta a cada 24 h (acima disso o Zernio segura na fila).
+  A confirmação pode levar horas: o envio fica "processando" e o verificador confirma depois.
+- Facebook: sai como **Reel** (3–60 s). Cortes maiores vão com os **últimos 60 s** (onde fica o pico);
+  só a cópia enviada é recortada. Meta limita 30 Reels por Página a cada 24 h.
+- Cada envio leva uma Idempotency-Key ligada ao registro do envio: repetir o mesmo envio não duplica.
+- Custo: 2 contas grátis no Zernio; a partir da 3ª, cobrança mensal por conta (ver zernio.com/pricing).
+- A chave fica no cofre (DPAPI). Recomendado ligar "zero content retention" no painel do Zernio.

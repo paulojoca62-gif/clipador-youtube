@@ -360,6 +360,7 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
       </div>
       <div class="card" id="c-tiktok">
         <h3>🎵 TikTok <span class="tag" id="st-tiktok"></span></h3>
+        <label>Conexão</label><select id="tt-via"><option value="direto">Direta (app próprio)</option><option value="zernio">Via Zernio</option></select>
         <label>Client key</label><input id="tt-client_key">
         <label>Client secret</label><input id="tt-client_secret" type="password" placeholder="deixe vazio para manter">
         <label>Redirect URI (vazio = endereço deste painel)</label><input id="tt-redirect_uri">
@@ -379,6 +380,7 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
       </div>
       <div class="card" id="c-facebook">
         <h3>📘 Página do Facebook <span class="tag" id="st-facebook"></span></h3>
+        <label>Conexão</label><select id="fb-via"><option value="direto">Direta (app próprio)</option><option value="zernio">Via Zernio (Reels)</option></select>
         <label>App ID</label><input id="fb-app_id">
         <label>App secret</label><input id="fb-app_secret" type="password" placeholder="deixe vazio para manter">
         <label>Token de usuário (Explorador da Graph API)</label><input id="fb-token" type="password" placeholder="EAAG...">
@@ -399,6 +401,18 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
           <button class="btn sec peq" onclick="testar('gemini')">🧪 Testar</button>
           <button class="btn perigo peq" onclick="desconectar('gemini')">Remover</button>
         </div>
+      </div>
+      <div class="card" id="c-zernio">
+        <h3>🔀 Zernio <span class="tag" id="st-zernio"></span></h3>
+        <p class="mini">Publica no TikTok (em público, pelo app aprovado do Zernio) e no Facebook (como Reel) sem app próprio. Crie a conta em zernio.com, conecte lá o TikTok e a Página do Facebook, gere uma chave de API e cole aqui. Depois escolha "Via Zernio" no cartão do TikTok e/ou do Facebook.</p>
+        <label>Chave da API</label><input id="zn-api_key" type="password" placeholder="deixe vazio para manter">
+        <div class="acoes"><button class="btn sec peq" onclick="buscarZernio(this)">🔎 Salvar e buscar contas</button></div>
+        <div class="linha">
+          <div><label>Conta do TikTok</label><select id="zn-tiktok"><option value="">—</option></select></div>
+          <div><label>Página do Facebook</label><select id="zn-facebook"><option value="">—</option></select></div>
+        </div>
+        <div class="acoes"><button class="btn peq" onclick="escolherZernio(this)">💾 Salvar contas</button></div>
+        <p class="mini">Reels aceitam até 60 s: cortes maiores vão para o Facebook com os últimos 60 s (onde fica o pico). TikTok: até 15 vídeos por conta a cada 24 h.</p>
       </div>
       <div class="card" id="c-telegram">
         <h3>✈️ Telegram <span class="tag" id="st-telegram"></span></h3>
@@ -600,14 +614,33 @@ async function carregarConfig(){
   val("tt-client_key", CFG.tiktok.client_key); val("tt-redirect_uri", CFG.tiktok.redirect_uri); val("fb-app_id", CFG.facebook.app_id);
   val("gm-modelo", CFG.gemini.modelo); val("tg-chat_id", CFG.telegram.chat_id); val("tg-avisar_postagem", CFG.telegram.avisar_postagem); val("tg-avisar_erro", CFG.telegram.avisar_erro); val("tg-revisar_pelo_telegram", CFG.telegram.revisar_pelo_telegram !== false); val("tg-enviar_video", CFG.telegram.enviar_video !== false);
   marcar("st-gemini", CFG.gemini.api_key, "chave salva", "sem chave");
+  const zn = CFG.zernio || {contas:{}, nomes:{}};
+  marcar("st-zernio", zn.api_key, "chave salva", "sem chave");
+  val("tt-via", CFG.tiktok.via || "direto"); val("fb-via", CFG.facebook.via || "direto");
+  for(const r of ["tiktok","facebook"]){ const sel = $("#zn-" + r); if(zn.contas[r] && ![...sel.options].some(o => o.value === zn.contas[r])){ const o = document.createElement("option"); o.value = zn.contas[r]; o.textContent = zn.nomes[r] || zn.contas[r]; sel.appendChild(o); } sel.value = zn.contas[r] || ""; }
   marcar("st-telegram", CFG.telegram.bot_token && CFG.telegram.chat_id, "ligado", "desligado");
   if(CFG.youtube.canal) $("#st-youtube").textContent = "conectado: " + CFG.youtube.canal;
   if(CFG.facebook.page_nome) $("#st-facebook").textContent = "Página: " + CFG.facebook.page_nome;
   if(CFG.tiktok.usuario) $("#st-tiktok").textContent = "@" + CFG.tiktok.usuario;
+  for(const [r, id] of [["tiktok","st-tiktok"],["facebook","st-facebook"]]){
+    if(CFG[r].via === "zernio") marcar(id, CFG.zernio && CFG.zernio.contas[r], "via Zernio: " + ((CFG.zernio.nomes || {})[r] || "conta escolhida"), "via Zernio: escolha a conta");
+  }
   $("#f-canal").innerHTML = '<option value="">Todos</option>' + CFG.canais.map(c => `<option>${esc(c.nome)}</option>`).join("");
   $("#f-categoria").innerHTML = '<option value="">Todas</option>' + Object.entries(CFG._categorias).map(([k,v]) => `<option value="${k}">${esc(v)}</option>`).join("");
   desenharCanais(CFG.canais);
 }
+async function buscarZernio(b){
+  const r = await acao(() => api("/api/zernio/contas", {api_key:$("#zn-api_key").value.trim()}), b);
+  $("#zn-api_key").value = "";
+  if(!r) return;
+  for(const rede of ["tiktok","facebook"]){
+    const sel = $("#zn-" + rede), atual = sel.value; sel.innerHTML = '<option value="">—</option>';
+    for(const c of r.contas.filter(c => c.plataforma === rede)){ const o = document.createElement("option"); o.value = c.id; o.textContent = (c.usuario || c.nome) + (c.ativa ? "" : " (inativa)"); sel.appendChild(o); }
+    sel.value = atual;
+  }
+  carregarConfig();
+}
+async function escolherZernio(b){ await acao(() => api("/api/zernio/escolher", {tiktok:$("#zn-tiktok").value, facebook:$("#zn-facebook").value}), b); carregarConfig(); carregarEstado(); }
 function marcar(id, ok, sim, nao){ const t = $("#" + id); t.textContent = ok ? sim : nao; t.className = "tag " + (ok ? "ok" : ""); }
 function resumoAgendador(){
   const n = +$("#ag-quantidade").value || 1, por = $("#ag-periodo").value, min = (por === "hora" ? 60 : 1440) / n;
@@ -701,8 +734,8 @@ async function salvarCanais(){
 /* contas */
 async function salvarConta(p){
   const pegar = (pre, campos) => Object.fromEntries(campos.map(c => { const e = $("#" + pre + "-" + c); return [c, e.type === "checkbox" ? e.checked : e.value.trim()]; }));
-  const corpo = {youtube: () => pegar("yt", ["client_id","client_secret","privacidade"]), tiktok: () => pegar("tt", ["client_key","client_secret","redirect_uri"]),
-    facebook: () => pegar("fb", ["app_id","app_secret"]), gemini: () => pegar("gm", ["api_key","modelo"]),
+  const corpo = {youtube: () => pegar("yt", ["client_id","client_secret","privacidade"]), tiktok: () => pegar("tt", ["via","client_key","client_secret","redirect_uri"]),
+    facebook: () => pegar("fb", ["via","app_id","app_secret"]), gemini: () => pegar("gm", ["api_key","modelo"]),
     telegram: () => pegar("tg", ["bot_token","chat_id","avisar_postagem","avisar_erro","revisar_pelo_telegram","enviar_video"])}[p]();
   await acao(() => api("/api/config/" + p, corpo).then(() => ({msg:"Salvo"})));
   document.querySelectorAll(`#c-${p} input[type=password]`).forEach(i => i.value = "");
