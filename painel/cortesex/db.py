@@ -114,6 +114,11 @@ class Banco:
             (score_minimo, time.time() - horas * 3600, plataforma, plataforma))
         return _corte(r[0]) if r else None
 
+    def sem_textos(self, horas):
+        return [_corte(r) for r in self._todos(
+            "SELECT * FROM cortes WHERE descartado = 0 AND titulo = '' AND criado >= ? ORDER BY score DESC",
+            (time.time() - horas * 3600,))]
+
     def cortes_antigos(self, antes_de):
         return self._todos("SELECT id, arquivo FROM cortes WHERE criado < ?", (antes_de,))
 

@@ -143,3 +143,23 @@ def test_tiktok_pkce():
     url = tiktok.link_login({"client_key": "k"}, "http://127.0.0.1:8777/", "tiktok-x", v)
     assert "code_challenge=" + tiktok.desafio(v) in url and "code_challenge_method=S256" in url
     assert len(tiktok.desafio(v)) == 64
+
+
+def test_completa_textos_que_faltaram(ambiente, monkeypatch):
+    m, pasta = ambiente
+    m.config.salvar("gemini", {"api_key": "k"})
+    sem = corte(m, pasta, 3.0, titulo="")
+    com = corte(m, pasta, 2.0)
+    falhas = iter([RuntimeError("lento")])
+
+    def gerar(canal, fala, chat, chave, modelo=None):
+        erro = next(falhas, None)
+        if erro:
+            raise erro
+        return {"titulo": "NOVO! 🔥", "legenda": "l", "hashtags": ["#x"]}
+    monkeypatch.setattr(motor.ia, "gerar_textos", gerar)
+    assert m.completar_textos() == 0          # falhou uma vez
+    assert m.tentativas_ia[sem] == 1
+    assert m.completar_textos() == 1
+    assert m.banco.corte(sem)["titulo"] == "NOVO! 🔥"
+    assert m.banco.corte(com)["titulo"] == "TÍTULO"

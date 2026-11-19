@@ -72,11 +72,12 @@ class Motor:
         self.pausa = {}          # plataforma -> (até quando, motivo)
         self._lock_post = threading.Lock()
         self.parar = threading.Event()
+        self.tentativas_ia = {}  # corte_id -> vezes que o Gemini falhou
 
     # ----- ciclo de vida
     def iniciar(self):
         self.sincronizar_canais()
-        for alvo in (self._loop_render, self._loop_agendador, self._loop_limpeza):
+        for alvo in (self._loop_render, self._loop_agendador, self._loop_limpeza, self._loop_textos):
             threading.Thread(target=alvo, name=alvo.__name__, daemon=True).start()
         log.info("CortesEX-PRESS iniciado")
 
@@ -248,6 +249,34 @@ class Motor:
             telegram.enviar(tg, texto)
         except Exception as e:  # noqa: BLE001
             log.warning("Telegram: %s", e)
+
+    def _loop_textos(self):
+        while not self.parar.wait(300):
+            try:
+                self.completar_textos()
+            except Exception:  # noqa: BLE001
+                log.exception("erro ao completar os textos da IA")
+
+    def completar_textos(self, maximo=5) -> int:
+        """Tenta de novo o Gemini nos cortes que ficaram sem título (ele estava lento ou ocupado)."""
+        if not self.config.get("gemini", "api_key"):
+            return 0
+        feitos = 0
+        horas = float(self.config.get("agendador", "horas_validade") or 24)
+        for c in self.banco.sem_textos(horas):
+            if feitos >= maximo or self.parar.is_set():
+                break
+            if self.tentativas_ia.get(c["id"], 0) >= 3:
+                continue
+            try:
+                t = self.regerar_textos(c["id"])
+                log.info("[%s] textos da IA (nova tentativa): %s", c["canal"], t["titulo"])
+                feitos += 1
+            except Exception as e:  # noqa: BLE001
+                self.tentativas_ia[c["id"]] = self.tentativas_ia.get(c["id"], 0) + 1
+                log.warning("[%s] o Gemini falhou de novo (%s/3): %s", c["canal"],
+                            self.tentativas_ia[c["id"]], e)
+        return feitos
 
     def _loop_limpeza(self):
         while not self.parar.wait(30):
