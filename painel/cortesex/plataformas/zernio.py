@@ -20,7 +20,7 @@ from pathlib import Path
 import requests
 
 from cortesex import midia, util
-from cortesex.plataformas import (AUTENTICACAO, CONTA, COTA, MIDIA, PERMANENTE, PERMISSAO, TEMPORARIO,
+from cortesex.plataformas import (nunca_conectou, AUTENTICACAO, CONTA, COTA, MIDIA, PERMANENTE, PERMISSAO, TEMPORARIO,
                                   ErroPostagem, resultado, retry_after, texto_post, titulo)
 
 BASE = "https://zernio.com/api/v1"
@@ -161,8 +161,8 @@ class Rede:
             r = self.http.post(f"{BASE}/posts", headers={**_cab(chave), "Idempotency-Key": chave_idem},
                                json=self._corpo(corte, conta, url_video), timeout=600)
         except requests.RequestException as e:
-            raise ErroPostagem(f"Zernio: conexão perdida ao publicar ({type(e).__name__})", False,
-                               TEMPORARIO, incerto=True) from e
+            raise ErroPostagem(f"Zernio: conexão perdida ao publicar ({type(e).__name__})", True,
+                               TEMPORARIO, incerto=not nunca_conectou(e)) from e
         if r.status_code not in (200, 201, 207):
             raise _erro_http(r, "publicar")
         res = self._ler_post(r.json().get("post") or {})

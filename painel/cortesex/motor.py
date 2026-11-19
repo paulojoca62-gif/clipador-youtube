@@ -22,7 +22,7 @@ from cortesex import db as D
 from cortesex.config import Config, pasta_dados
 from cortesex.db import Banco
 from cortesex.gravador import Canal, listar_segmentos
-from cortesex.plataformas import (COTA, EXIGEM_USUARIO, MIDIA, PERMANENTE, PROCESSAMENTO, TEMPORARIO,
+from cortesex.plataformas import (COTA, nunca_conectou, EXIGEM_USUARIO, MIDIA, PERMANENTE, PROCESSAMENTO, TEMPORARIO,
                                   ErroPostagem, facebook, telegram, tiktok, youtube, zernio)
 from cortesex.render import ErroEtapa, Renderizador, capturar, meta_json
 
@@ -579,7 +579,8 @@ class Motor:
             msg = seguranca.redigir(str(e) or type(e).__name__)
             tipo = getattr(e, "tipo", TEMPORARIO if not isinstance(e, ErroPostagem) else PERMANENTE)
             # AUD-H4: conexão perdida no meio do envio = pode ter publicado; não volta para a fila sozinho
-            incerto = getattr(e, "incerto", False) or isinstance(e, requests.RequestException)
+            incerto = getattr(e, "incerto", False) or (isinstance(e, requests.RequestException) and
+                                                       not nunca_conectou(e))
             self.banco.fim_postagem(pid, "incerto" if incerto else "erro",
                                     erro=msg + (" — confira na rede se o vídeo foi publicado" if incerto else ""),
                                     tipo_erro=tipo)

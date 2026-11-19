@@ -30,6 +30,24 @@ class ErroPostagem(RuntimeError):
         self.retry_after = retry_after
 
 
+def nunca_conectou(e) -> bool:
+    """A conexão nem abriu (sem internet, DNS falhou, recusada, tempo de conexão): nada chegou à rede social,
+    então NÃO pode ter publicado. Diferente de cair no meio do envio (aí é "incerto")."""
+    import requests
+    if isinstance(e, requests.ConnectTimeout):
+        return True
+    atual, vistos = e, 0
+    while atual is not None and vistos < 8:
+        nome = type(atual).__name__
+        if nome in ("NameResolutionError", "NewConnectionError", "ConnectTimeoutError") or \
+                isinstance(atual, (ConnectionRefusedError, __import__("socket").gaierror)):
+            return True
+        atual = getattr(atual, "reason", None) or atual.__cause__ or atual.__context__ or \
+            (atual.args[0] if getattr(atual, "args", None) and isinstance(atual.args[0], BaseException) else None)
+        vistos += 1
+    return False
+
+
 def resultado(url="", ext_id="", status="postado", detalhe="") -> dict:
     return {"url": url, "ext_id": str(ext_id or ""), "status": status, "detalhe": detalhe}
 

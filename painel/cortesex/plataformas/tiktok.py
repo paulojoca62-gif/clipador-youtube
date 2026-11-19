@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 import requests
 
-from cortesex.plataformas import (AUTENTICACAO, COTA, MIDIA, PERMISSAO, PRIVACIDADE, PROCESSAMENTO, TEMPORARIO,
+from cortesex.plataformas import (nunca_conectou, AUTENTICACAO, COTA, MIDIA, PERMISSAO, PRIVACIDADE, PROCESSAMENTO, TEMPORARIO,
                                   ErroPostagem, resultado, retry_after, texto_post, titulo)
 
 AUTH = "https://www.tiktok.com/v2/auth/authorize/"
@@ -158,7 +158,7 @@ def postar(cfg: dict, corte: dict) -> dict:
             except requests.RequestException as e:
                 ultima = fim_b == tamanho - 1     # só a última parte pode ter completado o envio
                 raise ErroPostagem(f"TikTok: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO,
-                                   incerto=ultima) from e
+                                   incerto=ultima and not nunca_conectou(e)) from e
             if r.status_code not in (200, 201, 206):
                 raise ErroPostagem(f"TikTok: falha no envio do vídeo ({r.status_code})", True, TEMPORARIO,
                                    retry_after(r))

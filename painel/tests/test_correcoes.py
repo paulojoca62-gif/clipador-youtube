@@ -7,7 +7,10 @@ import shutil
 import sys
 import socket
 import subprocess
+import threading
 import time
+
+import requests
 from pathlib import Path
 
 import pytest
@@ -492,3 +495,51 @@ def test_navegador_fechando_o_video_nao_vira_erro(painel, monkeypatch):
     except Exception:  # noqa: BLE001
         pass
     assert erros == []
+
+
+def _erro_real(url, servidor=None):
+    """Faz uma requisição de verdade (sem proxy) e devolve a exceção que o requests levantou."""
+    req = requests.Request("GET", url).prepare()
+    try:
+        requests.adapters.HTTPAdapter(max_retries=0).send(req, timeout=5)
+    except requests.RequestException as e:
+        return e
+    raise AssertionError("não falhou")
+
+
+def test_sem_internet_nao_vira_incerto():
+    """DNS falhou / conexão recusada: nada chegou à rede social → erro temporário, não 'incerto'."""
+    from cortesex.plataformas import nunca_conectou
+    assert nunca_conectou(_erro_real("http://cortesex-nao-existe.invalid/"))      # DNS (o 11001 do Windows)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        porta = s.getsockname()[1]                                                 # porta fechada
+    assert nunca_conectou(_erro_real(f"http://127.0.0.1:{porta}/"))
+    # conexão aberta e derrubada no meio: pode ter chegado → continua incerto
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def derruba():
+        c, _ = srv.accept()
+        c.recv(100)
+        c.close()
+    threading.Thread(target=derruba, daemon=True).start()
+    e = _erro_real(f"http://127.0.0.1:{srv.getsockname()[1]}/")
+    srv.close()
+    assert not nunca_conectou(e)
+
+
+def test_post_sem_internet_volta_para_a_fila(ambiente, monkeypatch):
+    m, pasta = ambiente
+    m.config.salvar("youtube", {"refresh_token": "r"})
+    autorizar(m)
+    cid = corte(m, pasta, 3.0)
+    erro = _erro_real("http://cortesex-nao-existe.invalid/")
+    from cortesex.plataformas import ErroPostagem
+    monkeypatch.setattr(motormod.youtube, "postar", lambda cfg, c: (_ for _ in ()).throw(
+        ErroPostagem("YouTube: a conexão caiu durante o envio", True, "temporario",
+                     incerto=not __import__("cortesex.plataformas", fromlist=["x"]).nunca_conectou(erro))))
+    with pytest.raises(ErroPostagem):
+        m.postar(m.banco.corte(cid), "youtube")
+    assert m.banco.postagens_de(cid)[0]["status"] == "erro"

@@ -4,7 +4,7 @@ import os
 
 import requests
 
-from cortesex.plataformas import (AUTENTICACAO, CONTA, COTA, MIDIA, PERMISSAO, PROCESSAMENTO, TEMPORARIO,
+from cortesex.plataformas import (nunca_conectou, AUTENTICACAO, CONTA, COTA, MIDIA, PERMISSAO, PROCESSAMENTO, TEMPORARIO,
                                   ErroPostagem, resultado, texto_post, titulo)
 
 V = "v26.0"          # v21.0 é removida pela Meta em 21/01/2027; v26.0 é a atual (jul/2026)
@@ -72,7 +72,7 @@ def postar(cfg: dict, corte: dict) -> dict:
             "description": f"{titulo(corte)}\n\n{texto_post(corte)}"}))
     except requests.RequestException as e:
         raise ErroPostagem(f"Facebook: a conexão caiu ao publicar ({type(e).__name__})", True, TEMPORARIO,
-                           incerto=True) from e
+                           incerto=not nunca_conectou(e)) from e
     if not j.get("success"):
         raise _erro(j)
     return resultado(f"https://www.facebook.com/reel/{vid}", vid, "processando")

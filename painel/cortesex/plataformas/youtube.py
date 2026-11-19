@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 
 import requests
 
-from cortesex.plataformas import (AUTENTICACAO, COTA, MIDIA, PERMISSAO, PROCESSAMENTO, TEMPORARIO, ErroPostagem,
+from cortesex.plataformas import (nunca_conectou, AUTENTICACAO, COTA, MIDIA, PERMISSAO, PROCESSAMENTO, TEMPORARIO, ErroPostagem,
                                   resultado, retry_after, texto_post, titulo)
 
 AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -89,7 +89,7 @@ def postar(cfg: dict, corte: dict) -> dict:
     except requests.RequestException as e:
         # o envio pode ter chegado: quem chama marca como "incerto", não repete sozinho
         raise ErroPostagem(f"YouTube: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO,
-                           incerto=True) from e
+                           incerto=not nunca_conectou(e)) from e
     if r2.status_code not in (200, 201):
         raise _erro(r2)
     j = r2.json()
