@@ -5,7 +5,9 @@ privados (SELF_ONLY) e só em contas privadas. Depois da auditoria, o mesmo
 código posta público, sem mudanças.
 """
 
+import hashlib
 import os
+import secrets
 import time
 from urllib.parse import urlencode
 
@@ -18,9 +20,22 @@ API = "https://open.tiktokapis.com/v2"
 ESCOPOS = "user.info.basic,video.publish"
 
 
-def link_login(cfg: dict, redirect_uri: str, estado: str) -> str:
-    return AUTH + "?" + urlencode({"client_key": cfg["client_key"], "scope": ESCOPOS, "response_type": "code",
-                                   "redirect_uri": redirect_uri, "state": estado})
+def novo_verificador() -> str:
+    """PKCE: o app de computador do TikTok exige code_verifier/code_challenge."""
+    return secrets.token_urlsafe(48)[:64]
+
+
+def desafio(verificador: str) -> str:
+    # O TikTok usa o SHA-256 em hexadecimal (não em base64url como o padrão OAuth).
+    return hashlib.sha256(verificador.encode()).hexdigest()
+
+
+def link_login(cfg: dict, redirect_uri: str, estado: str, verificador: str = "") -> str:
+    params = {"client_key": cfg["client_key"], "scope": ESCOPOS, "response_type": "code",
+              "redirect_uri": redirect_uri, "state": estado}
+    if verificador:
+        params.update(code_challenge=desafio(verificador), code_challenge_method="S256")
+    return AUTH + "?" + urlencode(params)
 
 
 def _guardar(cfg: dict, j: dict) -> dict:
@@ -28,10 +43,12 @@ def _guardar(cfg: dict, j: dict) -> dict:
             "expira_em": time.time() + int(j.get("expires_in", 86400)) - 300}
 
 
-def trocar_codigo(cfg: dict, codigo: str, redirect_uri: str) -> dict:
-    r = requests.post(f"{API}/oauth/token/", data={
-        "client_key": cfg["client_key"], "client_secret": cfg["client_secret"], "code": codigo,
-        "grant_type": "authorization_code", "redirect_uri": redirect_uri}, timeout=30)
+def trocar_codigo(cfg: dict, codigo: str, redirect_uri: str, verificador: str = "") -> dict:
+    dados = {"client_key": cfg["client_key"], "client_secret": cfg["client_secret"], "code": codigo,
+             "grant_type": "authorization_code", "redirect_uri": redirect_uri}
+    if verificador:
+        dados["code_verifier"] = verificador
+    r = requests.post(f"{API}/oauth/token/", data=dados, timeout=30)
     j = r.json()
     if "access_token" not in j:
         raise ErroPostagem(f"O TikTok não entregou o login: {j.get('error_description') or j.get('error')}", False)

@@ -34,6 +34,7 @@ class Painel:
         self.estados = {}       # state do OAuth -> plataforma
         self.fb_paginas = {}    # id -> página (com token), da última consulta
         self.ao_encerrar = None
+        self.verificadores = {}  # state -> code_verifier (PKCE do TikTok)
 
     # ----- OAuth
     def novo_estado(self, plataforma):
@@ -43,6 +44,8 @@ class Painel:
 
     def concluir_login(self, plataforma, codigo, estado=""):
         cfg = self.motor.config
+        verificador = self.verificadores.pop(estado, "") if estado else (
+            next(iter(self.verificadores.values()), "") if len(self.verificadores) == 1 else "")
         if estado and self.estados.pop(estado, None) not in (None, plataforma):
             raise ValueError("Login de outra plataforma.")
         if plataforma == "youtube":
@@ -55,7 +58,7 @@ class Painel:
                 pass
             return "YouTube conectado"
         t = cfg.get("tiktok")
-        novo = tiktok.trocar_codigo(t, codigo, t.get("redirect_uri") or self.redirect)
+        novo = tiktok.trocar_codigo(t, codigo, t.get("redirect_uri") or self.redirect, verificador)
         cfg.salvar("tiktok", novo)
         try:
             d = tiktok.info(cfg.get("tiktok"))
@@ -148,7 +151,10 @@ class Painel:
             t = cfg.get("tiktok")
             if not t.get("client_key") or not t.get("client_secret"):
                 raise ValueError("Preencha a Client key e a Client secret e salve.")
-            return {"url": tiktok.link_login(t, t.get("redirect_uri") or self.redirect, self.novo_estado("tiktok"))}
+            estado = self.novo_estado("tiktok")
+            self.verificadores = {estado: tiktok.novo_verificador()}
+            return {"url": tiktok.link_login(t, t.get("redirect_uri") or self.redirect, estado,
+                                             self.verificadores[estado])}
         if mm := re.fullmatch(r"/api/(youtube|tiktok)/codigo", caminho):
             codigo, estado = extrair_codigo(corpo.get("texto", ""))
             if not codigo:

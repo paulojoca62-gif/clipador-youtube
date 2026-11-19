@@ -135,3 +135,11 @@ def test_textos_do_gemini_e_reserva(monkeypatch):
 def test_codigo_do_login():
     assert extrair_codigo("http://127.0.0.1:8777/?code=4%2F0Ab&state=youtube-xyz") == ("4/0Ab", "youtube-xyz")
     assert extrair_codigo("  abc  ") == ("abc", "")
+
+
+def test_tiktok_pkce():
+    from cortesex.plataformas import tiktok
+    v = tiktok.novo_verificador()
+    url = tiktok.link_login({"client_key": "k"}, "http://127.0.0.1:8777/", "tiktok-x", v)
+    assert "code_challenge=" + tiktok.desafio(v) in url and "code_challenge_method=S256" in url
+    assert len(tiktok.desafio(v)) == 64
