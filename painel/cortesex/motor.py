@@ -1,28 +1,40 @@
-"""O motor: vigia os canais, gera os cortes, escreve os textos e posta no ritmo do agendador."""
+"""O motor: vigia os canais e conduz cada corte por um pipeline persistente até a publicação.
 
+Pipeline (cada estado fica no banco; ao reabrir, retoma do último checkpoint):
+    detectado → capturando → capturado → transcrevendo → transcrito → montando → montado
+              → gerando_textos → aguardando_revisao | aprovado          (falhou / descartado em qualquer ponto)
+Publicação: estado independente por rede em `postagens` (enviando → processando → postado | erro | incerto).
+"""
+
+import json
 import logging
-import queue
+import shutil
+import tempfile
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
-from cortesex import MAX_CANAIS, ia
+from cortesex import MAX_CANAIS, editorial, ia, legendas, midia, seguranca, util
+from cortesex import db as D
 from cortesex.config import Config, pasta_dados
 from cortesex.db import Banco
-from cortesex.gravador import Canal
-from cortesex.plataformas import ErroPostagem, facebook, telegram, tiktok, youtube
-from cortesex.render import Renderizador, meta_json
+from cortesex.gravador import Canal, listar_segmentos
+from cortesex.plataformas import (COTA, EXIGEM_USUARIO, MIDIA, PERMANENTE, PROCESSAMENTO, TEMPORARIO,
+                                  ErroPostagem, facebook, telegram, tiktok, youtube)
+from cortesex.render import ErroEtapa, Renderizador, capturar, meta_json
 
 log = logging.getLogger("cortesex")
 PLATAFORMAS = {"youtube": youtube, "tiktok": tiktok, "facebook": facebook}
 NOMES = {"youtube": "YouTube", "tiktok": "TikTok", "facebook": "Facebook"}
+PAUSA_USUARIO = 10 * 365 * 86400       # “até o usuário resolver”
 
 
 class LogNoBanco(logging.Handler):
     def __init__(self, banco):
         super().__init__(logging.INFO)
         self.banco = banco
+        self.addFilter(seguranca.RedigirLog())
 
     def emit(self, rec):
         try:
@@ -33,9 +45,7 @@ class LogNoBanco(logging.Handler):
 
 def conectado(config: Config, plataforma: str) -> bool:
     c = config.get(plataforma)
-    if plataforma == "youtube":
-        return bool(c.get("refresh_token"))
-    if plataforma == "tiktok":
+    if plataforma in ("youtube", "tiktok"):
         return bool(c.get("refresh_token"))
     return bool(c.get("page_token") and c.get("page_id"))
 
@@ -59,44 +69,105 @@ def vez_de_postar(ag: dict, ultima: float, feitos_no_periodo: int, agora: float)
     return feitos_no_periodo < n and agora - ultima >= intervalo
 
 
+def autorizado_para(canal_cfg: dict | None, plataforma: str, hoje: date | None = None) -> tuple[bool, str]:
+    """A autorização registrada pelo usuário permite publicar esse canal nessa rede?"""
+    if not canal_cfg:
+        return False, "canal não está cadastrado"
+    a = canal_cfg.get("autorizacao") or {}
+    if a.get("status") != "autorizado":
+        return False, f"autorização do canal: {a.get('status', 'nao_registrada')}"
+    if not a.get("publicar"):
+        return False, "a autorização não inclui publicar"
+    if plataforma not in (a.get("redes") or []):
+        return False, f"a autorização não inclui {NOMES.get(plataforma, plataforma)}"
+    if a.get("validade"):
+        try:
+            if (hoje or date.today()) > date.fromisoformat(a["validade"]):
+                return False, "a autorização venceu"
+        except ValueError:
+            return False, "validade da autorização inválida"
+    return True, ""
+
+
+def arquivos(corte: dict) -> dict:
+    base = Path(corte["arquivo"])
+    return {"video": base, "fonte": base.with_name(base.stem + "_fonte.mp4"),
+            "palavras": base.with_name(base.stem + "_palavras.json"),
+            "legendas": base.with_name(base.stem + "_legendas.json"),
+            "original": base.with_name(base.stem + "_original.mp4"), "meta": base.with_suffix(".json")}
+
+
+def _ler_json(p: Path, padrao):
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return padrao
+
+
+def _gravar_json(p: Path, dados):
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(p)
+
+
 class Motor:
     def __init__(self, config: Config | None = None, pasta: Path | None = None):
-        self.pasta = pasta or pasta_dados()
+        self.pasta = Path(pasta or pasta_dados())
         self.config = config or Config()
-        self.banco = Banco(self.pasta / "cortesex.db")
-        self.banco.limpar_enviando()
-        logging.getLogger("cortesex").addHandler(LogNoBanco(self.banco))
+        self.banco = Banco(self.pasta / "cortesex.db", self.pasta / "backups")
+        for m in self.banco.migracoes + self.config.migracoes:
+            log.info("migração: %s", m)
+        retomados = self.banco.recuperar_interrompidos()
+        incertos = self.banco.limpar_enviando()
+        if not any(isinstance(h, LogNoBanco) for h in log.handlers):
+            log.addHandler(LogNoBanco(self.banco))
+        if retomados:
+            log.info("%s corte(s) retomados do ponto onde pararam", retomados)
+        if incertos:
+            log.warning("%s envio(s) interrompidos: confira na aba Fila se foram publicados", incertos)
         self.render = Renderizador(self.config)
         self.canais: dict[str, Canal] = {}
-        self.fila = queue.PriorityQueue()
-        self.pausa = {}          # plataforma -> (até quando, motivo)
-        self._lock_post = threading.Lock()
         self.parar = threading.Event()
-        self.tentativas_ia = {}  # corte_id -> vezes que o Gemini falhou
+        self.batimentos: dict[str, float] = {}
+        self.tentativas_ia: dict[int, int] = {}
+        self.disco_baixo = False
+        self.ia_status = {"ok": None, "quando": 0.0, "erro": ""}
+        self._lock_post = threading.Lock()
+        self._lock_pegar = threading.Lock()
 
     # ----- ciclo de vida
     def iniciar(self):
         self.sincronizar_canais()
-        for alvo in (self._loop_render, self._loop_agendador, self._loop_limpeza, self._loop_textos):
-            threading.Thread(target=alvo, name=alvo.__name__, daemon=True).start()
-        log.info("CortesEX-PRESS iniciado")
+        workers = max(1, min(int(self.config.get("processamento", "workers_montagem") or 1), 4))
+        alvos = [(f"pipeline-{i + 1}", self._loop_pipeline) for i in range(workers)] + [
+            ("agendador", self._loop_agendador), ("verificador", self._loop_verificar),
+            ("limpeza", self._loop_limpeza), ("textos", self._loop_textos), ("analytics", self._loop_analytics)]
+        for nome, alvo in alvos:
+            threading.Thread(target=alvo, args=(nome,), name=nome, daemon=True).start()
+        log.info("CortesEX-PRESS iniciado (%s worker(s) de montagem)", workers)
 
     def encerrar(self):
         self.parar.set()
         for c in self.canais.values():
             c.encerrar()
 
+    def _bater(self, nome):
+        self.batimentos[nome] = time.time()
+
     def sincronizar_canais(self):
         """Liga os canais novos e desliga os removidos, sem mexer nos outros."""
-        desejados = {c["nome"].lower().strip().lstrip("@"): c for c in self.config.get("canais")[:MAX_CANAIS]
-                     if c.get("nome") and c.get("ativo", True)}
+        desejados = {}
+        for c in self.config.get("canais")[:MAX_CANAIS]:
+            if c.get("nome") and c.get("ativo", True) and (c.get("autorizacao") or {}).get("gravar", True):
+                desejados[c["nome"].lower().strip().lstrip("@")] = c
         for nome in list(self.canais):
             if nome not in desejados:
                 self.canais.pop(nome).encerrar()
                 log.info("[%s] removido da vigilância", nome)
         for nome, cfg in desejados.items():
             if nome not in self.canais:
-                canal = Canal(cfg, self.config, self.pasta, self.agendar_corte, self.avisar)
+                canal = Canal(cfg, self.config, self.pasta, self.agendar_corte, self.avisar,
+                              pode_gravar=lambda: not self.disco_baixo)
                 self.canais[nome] = canal
                 canal.iniciar()
                 log.info("[%s] vigiando", nome)
@@ -109,17 +180,38 @@ class Motor:
         agora = time.time()
         plats = {}
         for p in PLATAFORMAS:
-            pausa = self.pausa.get(p)
+            pausa = self.banco.pausa(p)
             plats[p] = {"ligado": bool(ag["plataformas"].get(p)), "conectado": conectado(self.config, p),
-                        "pausa": pausa[1] if pausa and pausa[0] > agora else "",
+                        "pausa": pausa["motivo"] if pausa and pausa["ate"] > agora else "",
+                        "pausa_ate": pausa["ate"] if pausa and pausa["ate"] > agora else 0,
+                        "pausa_tipo": pausa["tipo"] if pausa and pausa["ate"] > agora else "",
                         "ultima": self.banco.ultima_postagem(p)}
+        estados = self.banco.contagem_estados()
+        andamento = sum(n for e, n in estados.items() if e in (D.DETECTADO, D.CAPTURANDO, D.CAPTURADO, D.TRANSCREVENDO,
+                                                                D.TRANSCRITO, D.MONTANDO, D.MONTADO, D.GERANDO_TEXTOS))
         return {"canais": [c.estado() for c in self.canais.values()], "plataformas": plats,
-                "fila_render": self.fila.qsize(), "agendador": ag["ativo"],
-                "gemini": bool(self.config.get("gemini", "api_key"))}
+                "fila_render": andamento, "estados": estados, "agendador": ag["ativo"], "modo": ag.get("modo"),
+                "gemini": bool(self.config.get("gemini", "api_key")), "disco_baixo": self.disco_baixo,
+                "incertos": len(self.banco.postagens_status("incerto"))}
 
-    # ----- cortes
+    # ----- detecção → candidato persistente
     def agendar_corte(self, job):
-        self.fila.put((job["fim"] + 8, id(job), job))
+        canal = job["canal"]
+        C, D_ = self.config.get("corte"), self.config.get("deteccao")
+        if C.get("adaptativo", True):
+            antes, depois = float(C.get("contexto_antes_max", 60)), float(C.get("contexto_depois_max", 30))
+        else:
+            antes, depois = float(D_["antes_segundos"]), float(D_["depois_segundos"])
+        momento = job["momento"]
+        aberto = self.banco.candidato_aberto(canal.nome, momento - float(D_.get("agrupar_segundos", 30)))
+        if aberto:
+            self.banco.agrupar(aberto["id"], momento + depois, job["score"], job["motivo"], job["chat"])
+            log.info("[%s] pico agrupado ao corte #%s (mesmo evento)", canal.nome, aberto["id"])
+            return aberto["id"]
+        arquivo = canal.dir_cortes / f"{canal.nome_corte(momento)}.mp4"
+        cid = self.banco.novo_candidato(canal.nome, arquivo, momento, job["score"], job["motivo"], job["chat"],
+                                        momento - antes, momento + depois, canal.layout)
+        return cid
 
     def clipar_agora(self, nome):
         canal = self.canais.get(nome)
@@ -127,131 +219,444 @@ class Motor:
             raise KeyError(nome)
         return canal.disparar("manual (painel)", score=0, manual=True) is not None
 
-    def _loop_render(self):
+    # ----- pipeline
+    def _loop_pipeline(self, nome):
         while not self.parar.is_set():
+            self._bater(nome)
             try:
-                quando, _, job = self.fila.get(timeout=1)
-            except queue.Empty:
-                continue
-            espera = quando - time.time()
-            if espera > 0:
-                self.fila.put((quando, id(job), job))
-                self.parar.wait(min(espera, 1))
-                continue
-            try:
-                self._processar(job)
+                feito = self.processar_proximo()
             except Exception:  # noqa: BLE001
-                log.exception("erro ao gerar o corte")
+                log.exception("erro no pipeline")
+                feito = False
+            if not feito:
+                self.parar.wait(1)
 
-    def _processar(self, job):
-        canal = job["canal"]
-        feito = self.render.renderizar(job)
-        if not feito:
-            return
-        textos = {"titulo": "", "legenda": "", "hashtags": []}
+    def _pronto_para_tentar(self, c, agora):
+        t = int(c.get("etapa_tentativas") or 0)
+        return t == 0 or agora >= float(c.get("atualizado") or 0) + util.backoff(t, base=20, maximo=600, jitter=0)
+
+    def processar_proximo(self, agora=None) -> bool:
+        agora = agora or time.time()
+        etapas = [(D.DETECTADO, D.CAPTURANDO, self._etapa_capturar),
+                  (D.CAPTURADO, D.TRANSCREVENDO, self._etapa_transcrever),
+                  (D.TRANSCRITO, D.MONTANDO, self._etapa_montar),
+                  (D.MONTADO, D.GERANDO_TEXTOS, self._etapa_textos)]
+        with self._lock_pegar:
+            escolhido = None
+            for de, para, func in etapas:
+                for c in self.banco.pendentes([de], limite=30):
+                    if de == D.DETECTADO and c["janela_fim"] + 8 > agora:
+                        continue
+                    if not self._pronto_para_tentar(c, agora):
+                        continue
+                    if self.banco.reivindicar(c["id"], de, para):
+                        escolhido = (self.banco.corte(c["id"]), de, func)
+                        break
+                if escolhido:
+                    break
+        if not escolhido:
+            return False
+        corte, de, func = escolhido
+        maximo = int(self.config.get("processamento", "tentativas_etapa") or 3)
+        try:
+            func(corte)
+        except Exception as e:  # noqa: BLE001
+            msg = seguranca.redigir(str(e) or type(e).__name__)
+            definitivo = isinstance(e, ErroEtapa) and e.definitivo
+            if definitivo or int(corte.get("etapa_tentativas") or 0) >= maximo:
+                self.banco.mudar_estado(corte["id"], D.FALHOU, erro=msg,
+                                        proxima="Reprocessar (botão no corte)" if not definitivo else "")
+                log.warning("[%s] corte #%s falhou na etapa %s: %s", corte["canal"], corte["id"], de, msg)
+            else:
+                self.banco.mudar_estado(corte["id"], de, erro=msg, zerar_tentativas=False,
+                                        proxima=f"nova tentativa automática ({corte.get('etapa_tentativas')}/{maximo})")
+                log.info("[%s] corte #%s: etapa falhou, vai tentar de novo: %s", corte["canal"], corte["id"], msg)
+        return True
+
+    def _etapa_capturar(self, c):
+        if self.disco_baixo:
+            raise ErroEtapa("pouco espaço em disco")
+        arq = arquivos(c)
+        segs = listar_segmentos(self.pasta / "buffer" / c["canal"])
+        fonte_ini = capturar(segs, c["janela_ini"], c["janela_fim"], arq["fonte"],
+                             timeout=int(self.config.get("processamento", "timeout_ffmpeg") or 900))
+        self.banco.mudar_estado(c["id"], D.CAPTURADO, "fonte capturada", fonte=str(arq["fonte"]), fonte_ini=fonte_ini)
+
+    def _etapa_transcrever(self, c):
+        arq = arquivos(c)
+        if not arq["fonte"].exists():
+            raise ErroEtapa("a fonte do corte sumiu", definitivo=True)
+        G = self.config.get("gravacao")
+        if G.get("legendas") or self.config.get("corte", "adaptativo"):
+            palavras, perfil = self.render.transcrever(arq["fonte"], G.get("modelo_whisper", "small"))
+        else:
+            palavras, perfil = [], midia.perfil_audio(midia.ler_audio(arq["fonte"]))
+        _gravar_json(arq["palavras"], {"palavras": palavras, "perfil": perfil})
+        self.banco.mudar_estado(c["id"], D.TRANSCRITO, f"{len(palavras)} palavras transcritas")
+
+    def _limites(self, c, palavras, perfil):
+        C, Dt = self.config.get("corte"), self.config.get("deteccao")
+        t_pico = c["momento"] - c["fonte_ini"]
+        dur_fonte = len(perfil.get("db") or []) * perfil.get("passo", 0.5) or (c["janela_fim"] - c["fonte_ini"])
+        if C.get("adaptativo", True):
+            lim = editorial.limites_adaptativos(palavras, t_pico, dur_fonte, {
+                "duracao_min": C.get("duracao_min", 20), "duracao_max": C.get("duracao_max", 90),
+                "antes_padrao": Dt["antes_segundos"], "depois_padrao": Dt["depois_segundos"]})
+        else:
+            lim = {"ini": max(0.0, t_pico - Dt["antes_segundos"]), "fim": min(dur_fonte, t_pico + Dt["depois_segundos"]),
+                   "inicio_alinhado": False, "fim_alinhado": False, "metodo": "fixo"}
+        return lim, t_pico
+
+    def _etapa_montar(self, c, limites=None, segmentos=None):
+        arq = arquivos(c)
+        if not arq["fonte"].exists():
+            raise ErroEtapa("a fonte do corte sumiu", definitivo=True)
+        dados = _ler_json(arq["palavras"], {"palavras": [], "perfil": {}})
+        palavras = [tuple(p) for p in dados.get("palavras", [])]
+        perfil = dados.get("perfil") or {}
+        lim, t_pico = self._limites(c, palavras, perfil)
+        if limites:
+            lim.update(limites)
+            lim["metodo"] = "manual"
+        ini, fim = lim["ini"], lim["fim"]
+        G, L = self.config.get("gravacao"), self.config.get("legendas")
+        no_corte = legendas.recortar(palavras, ini, fim)
+        if segmentos is None:
+            segmentos = legendas.segmentar(no_corte, L.get("estilo", "classico"), L.get("max_caracteres")) \
+                if G.get("legendas") else []
+        _gravar_json(arq["legendas"], {"segmentos": segmentos, "estilo": L.get("estilo", "classico")})
+        canal_cfg = self.config.canal(c["canal"]) or {}
+        info = self.render.montar(arq["fonte"], ini, fim, arq["video"], layout=canal_cfg.get("layout", c.get("layout")),
+                                  cam=canal_cfg.get("cam"), segmentos=segmentos, cfg_legendas=L,
+                                  fps=G.get("fps_saida", 30),
+                                  timeout=int(self.config.get("processamento", "timeout_ffmpeg") or 900))
+        sinal = editorial.sinais(palavras, perfil, ini, fim, t_pico)
+        flags = editorial.avisos(sinal, lim, len(no_corte))
+        fala = " ".join(p[2] for p in no_corte)
+        campos = {"corte_ini": ini, "corte_fim": fim, "duracao": round(fim - ini, 1), "fala": fala,
+                  "validacao": {**info, "limites": lim, "sinais": sinal}, "flags": flags,
+                  "score_tecnico": editorial.score_tecnico(info, sinal),
+                  "versao_render": int(c.get("versao_render") or 0) + 1}
+        campos.update(self._pontuacao(c, sinal, lim, c.get("analise") or {}))
+        self.banco.mudar_estado(c["id"], D.MONTADO, f"vídeo montado ({fim - ini:.0f} s, {lim['metodo']})", **campos)
+        log.info("[%s] corte #%s montado: %.0f s (%s)", c["canal"], c["id"], fim - ini, lim["metodo"])
+
+    def _pontuacao(self, c, sinal, lim, analise):
+        crit = editorial.criterios(c.get("score"), sinal, lim, analise, manual=c.get("score", 0) == 0)
+        pesos = self.config.get("pontuacao", "pesos") or editorial.PESOS_PADRAO
+        p = editorial.pontuar(crit, pesos)
+        return {"criterios": {k: (round(v, 3) if v is not None else None) for k, v in crit.items()},
+                "score_editorial": p["score"], "confianca": p["confianca"]}
+
+    def _etapa_textos(self, c):
         gem = self.config.get("gemini")
+        detalhe = "sem chave do Gemini: textos ficam para o usuário"
         if gem.get("api_key"):
             try:
-                textos = ia.gerar_textos(canal.nome, feito["fala"], job["chat"], gem["api_key"],
-                                         gem.get("modelo") or "gemini-flash-latest")
-                log.info("[%s] textos da IA: %s", canal.nome, textos["titulo"])
+                r = ia.analisar_e_escrever(c["canal"], c.get("fala", ""), c.get("chat", []), gem["api_key"],
+                                           gem.get("modelo"))
+                self._aplicar_ia(c, r)
+                detalhe = f"textos da IA: {r['titulo']}"
+                self.ia_status = {"ok": True, "quando": time.time(), "erro": ""}
+                log.info("[%s] textos da IA: %s", c["canal"], r["titulo"])
             except Exception as e:  # noqa: BLE001
-                log.warning("[%s] a IA não gerou os textos: %s", canal.nome, e)
-        cid = self.banco.novo_corte(canal.nome, feito["arquivo"], job["momento"], feito["duracao"],
-                                    job["score"], job["motivo"], job["chat"], feito["fala"], **textos)
-        meta_json(feito["arquivo"], {"id": cid, "motivo": job["motivo"], "score": job["score"],
-                                     "chat": job["chat"], "fala": feito["fala"], **textos})
+                msg = seguranca.redigir(str(e))
+                self.ia_status = {"ok": False, "quando": time.time(), "erro": msg}
+                detalhe = f"a IA não gerou os textos (vai tentar de novo): {msg}"
+                log.warning("[%s] a IA não gerou os textos: %s", c["canal"], msg)
+        c = self.banco.corte(c["id"])
+        destino = D.REVISAO
+        if self.config.get("agendador", "modo") == "automatico" and self._passa_filtro_automatico(c):
+            destino = D.APROVADO
+        self.banco.mudar_estado(c["id"], destino, detalhe)
+        meta_json(Path(c["arquivo"]), {"id": c["id"], "motivo": c["motivo"], "score": c["score"],
+                                       "score_editorial": c.get("score_editorial"), "chat": c["chat"],
+                                       "fala": c.get("fala", ""), "titulo": c["titulo"], "legenda": c["legenda"],
+                                       "hashtags": c["hashtags"], "categoria": c.get("categoria")})
+
+    def _aplicar_ia(self, c, r):
+        analise = r.get("analise") or {}
+        self.banco.atualizar_textos(c["id"], r["titulo"], r["legenda"], r["hashtags"], r.get("textos_plataforma") or {})
+        flags = list(dict.fromkeys((c.get("flags") or []) + [f"ia:{x}" for x in analise.get("riscos", [])]))
+        sinal = (c.get("validacao") or {}).get("sinais") or {}
+        lim = (c.get("validacao") or {}).get("limites") or {}
+        campos = {"analise": analise, "categoria": analise.get("categoria", "outros"), "flags": flags}
+        campos.update(self._pontuacao(c, sinal, lim, analise))
+        self.banco.atualizar(c["id"], **campos)
+
+    def _passa_filtro_automatico(self, c) -> bool:
+        ag = self.config.get("agendador")
+        if c.get("score", 0) < float(ag.get("score_minimo", 0)):
+            return False
+        minimo = float(ag.get("score_editorial_minimo") or 0)
+        if minimo and (c.get("score_editorial") is None or c["score_editorial"] < minimo):
+            return False
+        if ag.get("exigir_textos_ia", True) and not c.get("titulo"):
+            return False
+        return self._validado(c)
+
+    def _validado(self, c) -> bool:
+        """Cortes da 1.x não têm validação gravada: valida o arquivo uma vez e guarda o resultado."""
+        v = c.get("validacao") or {}
+        if v:
+            return bool(v.get("ok"))
+        try:
+            info = midia.validar(c["arquivo"])
+        except midia.MidiaInvalida as e:
+            info = {"ok": False, "erro": str(e)}
+        except Exception:  # noqa: BLE001
+            return False
+        self.banco.atualizar(c["id"], validacao=info)
+        c["validacao"] = info
+        return bool(info.get("ok"))
 
     def regerar_textos(self, corte_id):
         c = self.banco.corte(corte_id)
         gem = self.config.get("gemini")
-        t = ia.gerar_textos(c["canal"], c["fala"], c["chat"], gem.get("api_key"), gem.get("modelo"))
-        self.banco.atualizar_textos(corte_id, t["titulo"], t["legenda"], t["hashtags"])
-        return t
+        r = ia.analisar_e_escrever(c["canal"], c.get("fala", ""), c.get("chat", []), gem.get("api_key"),
+                                   gem.get("modelo"))
+        self._aplicar_ia(c, r)
+        self.ia_status = {"ok": True, "quando": time.time(), "erro": ""}
+        return {"titulo": r["titulo"], "legenda": r["legenda"], "hashtags": r["hashtags"]}
+
+    def reprocessar(self, corte_id):
+        """Corte que falhou volta para o último checkpoint que ainda tem material."""
+        c = self.banco.corte(corte_id)
+        arq = arquivos(c)
+        if arq["palavras"].exists() and arq["fonte"].exists():
+            volta = D.TRANSCRITO
+        elif arq["fonte"].exists():
+            volta = D.CAPTURADO
+        else:
+            volta = D.DETECTADO
+        self.banco.mudar_estado(corte_id, volta, "reprocessamento pedido pelo usuário", descartado=0)
+        return volta
+
+    def remontar(self, corte_id, segmentos=None, ini=None, fim=None):
+        """Editor: monta de novo a partir da fonte, com legendas/limites editados. Guarda o vídeo original."""
+        c = self.banco.corte(corte_id)
+        arq = arquivos(c)
+        if not arq["fonte"].exists():
+            raise ErroEtapa("a fonte deste corte já foi apagada (retenção); não dá para montar de novo")
+        if arq["video"].exists() and not arq["original"].exists():
+            shutil.copy2(arq["video"], arq["original"])
+        limites = None
+        if ini is not None and fim is not None:
+            dmax = float(self.config.get("corte", "duracao_max") or 90)
+            ini, fim = max(0.0, float(ini)), float(fim)
+            if not 3 <= fim - ini <= max(dmax, 180):
+                raise ValueError("duração do corte fora dos limites")
+            limites = {"ini": ini, "fim": fim, "inicio_alinhado": True, "fim_alinhado": True}
+        if segmentos is not None:
+            dur = (fim if fim is not None else c["corte_fim"]) - (ini if ini is not None else c["corte_ini"])
+            segmentos = legendas.validar_segmentos(segmentos, dur)
+        estado_antes = c["estado"]
+        self._etapa_montar(c, limites=limites, segmentos=segmentos)
+        # o corte volta ao estado em que estava (aprovado continua aprovado)
+        if estado_antes in D.PRONTOS:
+            self.banco.mudar_estado(corte_id, estado_antes, "remontado no editor")
+        else:
+            self.banco.mudar_estado(corte_id, D.REVISAO, "remontado no editor")
+        return self.banco.corte(corte_id)
+
+    def editor(self, corte_id) -> dict:
+        c = self.banco.corte(corte_id)
+        arq = arquivos(c)
+        leg = _ler_json(arq["legendas"], {"segmentos": [], "estilo": ""})
+        dados = _ler_json(arq["palavras"], {"palavras": [], "perfil": {}})
+        dur_fonte = len((dados.get("perfil") or {}).get("db") or []) * 0.5
+        return {"corte": c, "segmentos": leg.get("segmentos", []), "tem_fonte": arq["fonte"].exists(),
+                "duracao_fonte": dur_fonte, "palavras_fonte": len(dados.get("palavras", [])),
+                "tem_original": arq["original"].exists()}
 
     # ----- postagem
-    def postar(self, corte: dict, plataforma: str, origem="agendador") -> str:
+    def postar(self, corte: dict, plataforma: str, origem="agendador", forcar=False, ignorar_autorizacao=False):
         mod = PLATAFORMAS[plataforma]
+        if not forcar:
+            ja = self.banco.ja_postado(corte["id"], plataforma)
+            if ja:
+                raise ErroPostagem(f"{NOMES[plataforma]}: esse corte já está {ja['status']} nessa rede "
+                                   "(use 'postar de novo' para repetir de propósito)", False, PERMANENTE)
+        if not ignorar_autorizacao:
+            ok, motivo = autorizado_para(self.config.canal(corte["canal"]), plataforma)
+            if not ok:
+                raise ErroPostagem(f"{NOMES[plataforma]}: publicação bloqueada — {motivo}", False, PERMANENTE)
         pid = self.banco.nova_postagem(corte["id"], plataforma, origem)
         try:
+            if not Path(corte["arquivo"]).exists() or corte.get("arquivo_removido"):
+                raise ErroPostagem("O arquivo do corte não existe mais.", False, MIDIA)
+            try:
+                midia.validar(corte["arquivo"])
+            except midia.MidiaInvalida as e:
+                raise ErroPostagem(f"vídeo inválido: {e}", False, MIDIA) from e
             cfg = self.config.get(plataforma)
             if plataforma == "tiktok":
                 novo = tiktok.renovar(cfg)
                 if novo:
                     self.config.salvar("tiktok", novo)
                     cfg.update(novo)
-            if not Path(corte["arquivo"]).exists():
-                raise ErroPostagem("O arquivo do corte não existe mais.", False)
-            url = mod.postar(cfg, corte)
+            res = mod.postar(cfg, corte)
+            if isinstance(res, str):
+                res = {"url": res, "ext_id": "", "status": "postado", "detalhe": ""}
         except Exception as e:  # noqa: BLE001
-            msg = str(e) or type(e).__name__
-            self.banco.fim_postagem(pid, "erro", erro=msg)
-            log.warning("[%s] %s: erro ao postar: %s", corte["canal"], NOMES[plataforma], msg)
-            if isinstance(e, ErroPostagem) and not e.tentar_de_novo:
-                self.pausa[plataforma] = (time.time() + 3600, msg)
+            msg = seguranca.redigir(str(e) or type(e).__name__)
+            tipo = getattr(e, "tipo", TEMPORARIO if not isinstance(e, ErroPostagem) else PERMANENTE)
+            self.banco.fim_postagem(pid, "erro", erro=msg, tipo_erro=tipo)
+            log.warning("[%s] %s: erro ao postar (%s): %s", corte["canal"], NOMES[plataforma], tipo, msg)
+            self._pausar_por_erro(plataforma, e, tipo, msg)
             self.avisar("erro", f"❌ {NOMES[plataforma]}: {msg}\nCorte: {corte.get('titulo') or corte['arquivo']}")
             raise
-        self.banco.fim_postagem(pid, "postado", url=url)
-        self.pausa.pop(plataforma, None)
-        log.info("[%s] postado no %s: %s", corte["canal"], NOMES[plataforma], url)
-        self.avisar("postagem", f"✅ Postado no {NOMES[plataforma]}\n{corte.get('titulo')}\n"
-                                f"Pico do chat: {corte['score']:.1f}x\n{url}")
-        return url
+        self.banco.fim_postagem(pid, res["status"], url=res.get("url", ""), ext_id=res.get("ext_id", ""),
+                                detalhe=res.get("detalhe", ""))
+        self.banco.retomar(plataforma)
+        log.info("[%s] %s no %s: %s %s", corte["canal"], "enviado" if res["status"] == "processando" else "postado",
+                 NOMES[plataforma], res.get("url", ""), res.get("detalhe", ""))
+        if res["status"] == "postado":
+            self._avisar_postado(corte, plataforma, res)
+        return res.get("url", "")
 
-    def _loop_agendador(self):
+    def _avisar_postado(self, corte, plataforma, res):
+        extra = f"\n⚠️ {res['detalhe']}" if res.get("detalhe") else ""
+        nota = corte.get("score_editorial")
+        self.avisar("postagem", f"✅ Postado no {NOMES[plataforma]}\n{corte.get('titulo')}\n"
+                                f"Pico do chat: {corte['score']:.1f}x" + (f" · nota editorial {nota:.0f}" if nota else "") +
+                                f"\n{res.get('url', '')}{extra}")
+
+    def _pausar_por_erro(self, plataforma, e, tipo, msg):
+        if tipo in (MIDIA, PERMANENTE) or not isinstance(e, ErroPostagem):
+            if not isinstance(e, ErroPostagem):
+                tipo = TEMPORARIO
+            else:
+                return
+        antes = self.banco.pausa(plataforma)
+        tent = (antes["tentativas"] if antes else 0) + 1
+        agora = time.time()
+        ra = getattr(e, "retry_after", None) or 0
+        if tipo in EXIGEM_USUARIO:
+            ate = agora + PAUSA_USUARIO
+            msg = msg + " — resolva e clique em Retomar"
+        elif tipo == COTA:
+            ate = agora + max(ra, util.backoff(tent, base=3600, maximo=6 * 3600))
+        else:  # temporário / processamento
+            ate = agora + max(ra, util.backoff(tent, base=120, maximo=3600))
+        self.banco.pausar(plataforma, ate, msg, tipo, tent)
+
+    def retomar(self, plataforma):
+        self.banco.retomar(plataforma)
+        log.info("%s: postagens retomadas pelo usuário", NOMES.get(plataforma, plataforma))
+
+    # ----- agendador
+    def _loop_agendador(self, nome):
         while not self.parar.wait(20):
+            self._bater(nome)
             try:
                 self.rodar_agendador()
             except Exception:  # noqa: BLE001
                 log.exception("erro no agendador")
 
+    def candidatos(self, plataforma, ag=None):
+        """Cortes elegíveis para o agendador nessa rede, já ordenados, com o motivo de quem ficou de fora."""
+        ag = ag or self.config.get("agendador")
+        modo = ag.get("modo", "semiautomatico")
+        if modo == "manual":
+            return [], []
+        estados = (D.APROVADO,) if modo == "semiautomatico" else (D.APROVADO, D.REVISAO)
+        bons, fora = [], []
+        for c in self.banco.candidatos_para(plataforma, float(ag.get("horas_validade", 24)), estados):
+            motivo = ""
+            ok, m_aut = autorizado_para(self.config.canal(c["canal"]), plataforma)
+            if not ok:
+                motivo = m_aut
+            elif c["estado"] == D.REVISAO and not self._passa_filtro_automatico(c):
+                motivo = "abaixo dos filtros do modo automático"
+            elif c["estado"] == D.APROVADO and ag.get("exigir_textos_ia", True) and not c.get("titulo"):
+                motivo = "sem título"
+            elif not Path(c["arquivo"]).exists():
+                motivo = "arquivo não encontrado"
+            (fora if motivo else bons).append({**c, "_fora": motivo} if motivo else c)
+        ordem = ag.get("ordenar_por", "editorial")
+        if ordem == "pico":
+            bons.sort(key=lambda c: (c["score"], c["criado"]), reverse=True)
+        elif ordem == "recente":
+            bons.sort(key=lambda c: c["criado"], reverse=True)
+        else:
+            bons.sort(key=lambda c: (c.get("score_editorial") if c.get("score_editorial") is not None else -1,
+                                     c["score"]), reverse=True)
+        if ag.get("evitar_mesmo_canal_seguido") and len(bons) > 1:
+            ultimo = self.banco.ultimo_canal_postado(plataforma)
+            outros = [c for c in bons if c["canal"] != ultimo]
+            if outros:
+                bons = outros + [c for c in bons if c["canal"] == ultimo]
+        return bons, fora
+
     def rodar_agendador(self, agora: float | None = None):
         ag = self.config.get("agendador")
         agora = agora or time.time()
-        if not ag.get("ativo") or not dentro_da_janela(ag, datetime.fromtimestamp(agora)):
+        if not ag.get("ativo") or ag.get("modo") == "manual" or not dentro_da_janela(ag, datetime.fromtimestamp(agora)):
             return []
         feitos = []
         inicio_periodo = agora - periodo_segundos(ag.get("periodo", "hora"))
         for plat, ligado in ag.get("plataformas", {}).items():
             if not ligado or plat not in PLATAFORMAS or not conectado(self.config, plat):
                 continue
-            pausa = self.pausa.get(plat)
-            if pausa and pausa[0] > agora:
+            pausa = self.banco.pausa(plat)
+            if pausa and pausa["ate"] > agora:
                 continue
             if not vez_de_postar(ag, self.banco.ultima_postagem(plat),
                                  self.banco.postagens_desde(inicio_periodo, plat), agora):
                 continue
-            corte = self.banco.proximo_para(plat, float(ag.get("score_minimo", 0)),
-                                            float(ag.get("horas_validade", 24)), ag.get("exigir_textos_ia", True))
-            if not corte:
+            bons, _ = self.candidatos(plat, ag)
+            if not bons:
                 continue
             with self._lock_post:
                 try:
-                    self.postar(corte, plat)
-                    feitos.append((plat, corte["id"]))
+                    self.postar(bons[0], plat)
+                    feitos.append((plat, bons[0]["id"]))
                 except Exception:  # noqa: BLE001
                     pass
         return feitos
 
-    # ----- avisos e limpeza
-    def avisar(self, tipo, texto):
-        tg = self.config.get("telegram")
-        if not tg.get("bot_token") or not tg.get("chat_id"):
-            return
-        if (tipo == "postagem" and not tg.get("avisar_postagem")) or (tipo == "erro" and not tg.get("avisar_erro")):
-            return
-        if tipo not in ("postagem", "erro"):
-            return
-        threading.Thread(target=self._telegram, args=(tg, texto), daemon=True).start()
+    # ----- verificação pós-envio
+    def _loop_verificar(self, nome):
+        while not self.parar.wait(60):
+            self._bater(nome)
+            try:
+                self.verificar_processando()
+            except Exception:  # noqa: BLE001
+                log.exception("erro ao verificar postagens")
 
-    def _telegram(self, tg, texto):
-        try:
-            telegram.enviar(tg, texto)
-        except Exception as e:  # noqa: BLE001
-            log.warning("Telegram: %s", e)
+    def verificar_processando(self, agora=None) -> int:
+        agora = agora or time.time()
+        n = 0
+        for p in self.banco.postagens_status("processando"):
+            mod = PLATAFORMAS.get(p["plataforma"])
+            if not mod or not hasattr(mod, "verificar") or not p.get("ext_id"):
+                self.banco.fim_postagem(p["id"], "postado", url=p["url"], detalhe="sem verificação disponível")
+                continue
+            try:
+                r = mod.verificar(self.config.get(p["plataforma"]), p["ext_id"])
+            except Exception as e:  # noqa: BLE001
+                if agora - p["quando"] > 86400:
+                    self.banco.fim_postagem(p["id"], "incerto", url=p["url"],
+                                            erro=f"não consegui confirmar a publicação: {seguranca.redigir(e)}")
+                continue
+            if r["status"] == "postado":
+                self.banco.fim_postagem(p["id"], "postado", url=r.get("url") or p["url"], detalhe=r.get("detalhe", ""))
+                corte = self.banco.corte(p["corte_id"])
+                if corte:
+                    self._avisar_postado(corte, p["plataforma"], r)
+                n += 1
+            elif r["status"] == "erro":
+                self.banco.fim_postagem(p["id"], "erro", url=r.get("url", ""), erro=r.get("erro", "falhou"),
+                                        tipo_erro=r.get("tipo", PROCESSAMENTO))
+            elif agora - p["quando"] > 86400:
+                self.banco.fim_postagem(p["id"], "incerto", url=p["url"], erro="ainda processando após 24 h")
+        return n
 
-    def _loop_textos(self):
+    # ----- textos que faltaram
+    def _loop_textos(self, nome):
         while not self.parar.wait(300):
+            self._bater(nome)
             try:
                 self.completar_textos()
             except Exception:  # noqa: BLE001
@@ -275,18 +680,116 @@ class Motor:
             except Exception as e:  # noqa: BLE001
                 self.tentativas_ia[c["id"]] = self.tentativas_ia.get(c["id"], 0) + 1
                 log.warning("[%s] o Gemini falhou de novo (%s/3): %s", c["canal"],
-                            self.tentativas_ia[c["id"]], e)
+                            self.tentativas_ia[c["id"]], seguranca.redigir(e))
         return feitos
 
-    def _loop_limpeza(self):
+    # ----- analytics
+    def _loop_analytics(self, nome):
+        while not self.parar.wait(600):
+            self._bater(nome)
+            try:
+                self.coletar_metricas()
+            except Exception:  # noqa: BLE001
+                log.exception("erro ao coletar métricas")
+
+    def coletar_metricas(self) -> int:
+        A = self.config.get("analytics")
+        if not A.get("ativo") or not conectado(self.config, "youtube"):
+            return 0
+        posts = self.banco.postagens_para_metricas("youtube", time.time() - float(A.get("dias_acompanhar", 30)) * 86400,
+                                                   float(A.get("horas_entre_coletas", 6)) * 3600)
+        if not posts:
+            return 0
+        stats = youtube.estatisticas(self.config.get("youtube"), [p["ext_id"] for p in posts])
+        for p in posts:
+            s = stats.get(p["ext_id"])
+            if s:
+                self.banco.nova_metrica(p["id"], s.get("views"), s.get("likes"), s.get("comentarios"))
+        return len(stats)
+
+    # ----- avisos e limpeza
+    def avisar(self, tipo, texto):
+        tg = self.config.get("telegram")
+        if not tg.get("bot_token") or not tg.get("chat_id"):
+            return
+        if tipo == "postagem" and not tg.get("avisar_postagem"):
+            return
+        if tipo in ("erro", "sistema") and not tg.get("avisar_erro"):
+            return
+        if tipo not in ("postagem", "erro", "sistema"):
+            return
+        threading.Thread(target=self._telegram, args=(tg, seguranca.redigir(texto)), daemon=True).start()
+
+    def _telegram(self, tg, texto):
+        try:
+            telegram.enviar(tg, texto)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Telegram: %s", seguranca.redigir(e))
+
+    def _loop_limpeza(self, nome):
         while not self.parar.wait(30):
-            G = self.config.get("gravacao")
-            for c in list(self.canais.values()):
-                c.limpar(G["buffer_minutos"])
-            for c in self.banco.cortes_antigos(time.time() - G["dias_guardar_cortes"] * 86400):
-                p = Path(c["arquivo"])
-                for arq in (p, p.with_suffix(".json")):
+            self._bater(nome)
+            try:
+                self.limpar()
+            except Exception:  # noqa: BLE001
+                log.exception("erro na limpeza")
+
+    def limpar(self, agora=None) -> dict:
+        agora = agora or time.time()
+        G, A = self.config.get("gravacao"), self.config.get("armazenamento")
+        for c in list(self.canais.values()):
+            c.limpar(G["buffer_minutos"])
+        # espaço em disco
+        livre_gb = shutil.disk_usage(self.pasta).free / 1e9
+        baixo = livre_gb < float(A.get("minimo_livre_gb", 5))
+        if baixo != self.disco_baixo:
+            self.disco_baixo = baixo
+            if baixo:
+                log.warning("pouco espaço em disco (%.1f GB livres): gravação pausada", livre_gb)
+                self.avisar("sistema", f"⚠️ CortesEX-PRESS: só {livre_gb:.1f} GB livres. A gravação foi pausada.")
+            else:
+                log.info("espaço em disco normalizado (%.1f GB livres): gravação liberada", livre_gb)
+        removidos = {"fontes": 0, "cortes": 0, "temporarios": 0}
+        andamento = (D.DETECTADO, D.CAPTURANDO, D.CAPTURADO, D.TRANSCREVENDO, D.TRANSCRITO, D.MONTANDO, D.MONTADO,
+                     D.GERANDO_TEXTOS)
+        # fontes (janela larga para re-render)
+        limite_fonte = agora - float(A.get("dias_guardar_fontes", 3)) * 86400
+        for c in self.banco.para_limpeza(limite_fonte):
+            if c["estado"] in andamento:
+                continue
+            arq = arquivos(c)
+            for chave in ("fonte", "palavras"):
+                if arq[chave].exists():
                     try:
-                        arq.unlink(missing_ok=True)
+                        arq[chave].unlink()
+                        removidos["fontes"] += chave == "fonte"
                     except OSError:
                         pass
+        # vídeos dos cortes
+        limite = agora - float(G.get("dias_guardar_cortes", 7)) * 86400
+        for c in self.banco.para_limpeza(limite):
+            if c["estado"] in andamento or c["estado"] == D.APROVADO:
+                continue                      # aguardando publicação: protegido
+            ocupado = self.banco.ja_postado(c["id"], "youtube") or self.banco.ja_postado(c["id"], "tiktok") or \
+                self.banco.ja_postado(c["id"], "facebook")
+            if ocupado and ocupado["status"] in ("enviando", "processando"):
+                continue
+            if ocupado and A.get("manter_publicados"):
+                continue
+            arq = arquivos(c)
+            for p in (arq["video"], arq["meta"], arq["original"], arq["legendas"], arq["fonte"], arq["palavras"]):
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            self.banco.atualizar(c["id"], arquivo_removido=1)
+            removidos["cortes"] += 1
+        # temporários de render que sobraram de uma queda
+        for p in Path(tempfile.gettempdir()).glob("cortesex_*"):
+            try:
+                if p.is_dir() and agora - p.stat().st_mtime > 6 * 3600:
+                    shutil.rmtree(p, ignore_errors=True)
+                    removidos["temporarios"] += 1
+            except OSError:
+                pass
+        return removidos

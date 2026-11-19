@@ -1,20 +1,31 @@
-"""Servidor do painel: a página e a API JSON, só em 127.0.0.1 (nada fica exposto na rede)."""
+"""Servidor do painel: a página e a API JSON, só em 127.0.0.1 (nada fica exposto na rede).
+
+Proteções: só atende Host 127.0.0.1/localhost na porta do painel (bloqueia DNS rebinding); ações (POST)
+exigem o cabeçalho X-CortesEX e, se vier Origin, que seja o próprio painel; cabeçalhos de segurança em
+toda resposta; vídeos só de dentro da pasta de dados; erros sem segredos.
+"""
 
 import json
 import logging
 import re
 import secrets
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from cortesex import MAX_CANAIS, NOME, PORTA, VERSAO, ia
+from cortesex import MAX_CANAIS, NOME, PORTA, VERSAO, analytics, diagnostico, editorial, ia, seguranca
+from cortesex.config import STATUS_AUTORIZACAO, normalizar_canal
+from cortesex.motor import NOMES, arquivos
 from cortesex.plataformas import facebook, telegram, tiktok, youtube
+from cortesex.render import CAM_PRESETS, cam_valida
 from cortesex.util import pasta_app
 
 log = logging.getLogger("cortesex")
 WEB = pasta_app() / "web"
+SECOES = ("gravacao", "deteccao", "agendador", "youtube", "tiktok", "facebook", "gemini", "telegram",
+          "corte", "legendas", "pontuacao", "processamento", "armazenamento", "analytics")
 
 
 def extrair_codigo(texto: str) -> tuple[str, str]:
@@ -26,13 +37,25 @@ def extrair_codigo(texto: str) -> tuple[str, str]:
     return texto, ""
 
 
+def _num(q, k, padrao=0.0):
+    try:
+        return float((q.get(k) or [padrao])[0])
+    except (TypeError, ValueError):
+        return padrao
+
+
+def _txt(q, k):
+    v = (q.get(k) or [""])[0]
+    return re.sub(r"[^\w\-]", "", v)[:40]
+
+
 class Painel:
     def __init__(self, motor, porta=PORTA):
         self.motor = motor
         self.porta = porta
         self.redirect = f"http://127.0.0.1:{porta}/"
-        self.estados = {}       # state do OAuth -> plataforma
-        self.fb_paginas = {}    # id -> página (com token), da última consulta
+        self.estados = {}        # state do OAuth -> plataforma
+        self.fb_paginas = {}     # id -> página (com token), da última consulta
         self.ao_encerrar = None
         self.verificadores = {}  # state -> code_verifier (PKCE do TikTok)
 
@@ -44,9 +67,11 @@ class Painel:
 
     def concluir_login(self, plataforma, codigo, estado=""):
         cfg = self.motor.config
+        if estado and estado not in self.estados:
+            raise ValueError("Login expirado ou de outra janela. Clique em Conectar de novo.")
         verificador = self.verificadores.pop(estado, "") if estado else (
             next(iter(self.verificadores.values()), "") if len(self.verificadores) == 1 else "")
-        if estado and self.estados.pop(estado, None) not in (None, plataforma):
+        if estado and self.estados.pop(estado, None) != plataforma:
             raise ValueError("Login de outra plataforma.")
         if plataforma == "youtube":
             y = cfg.get("youtube")
@@ -57,6 +82,8 @@ class Painel:
             except Exception:  # noqa: BLE001
                 pass
             return "YouTube conectado"
+        if plataforma != "tiktok":
+            raise ValueError("plataforma desconhecida")
         t = cfg.get("tiktok")
         novo = tiktok.trocar_codigo(t, codigo, t.get("redirect_uri") or self.redirect, verificador)
         cfg.salvar("tiktok", novo)
@@ -67,39 +94,81 @@ class Painel:
             pass
         return "TikTok conectado"
 
-    # ----- rotas
+    # ----- leitura
     def get(self, caminho, q):
         m = self.motor
         if caminho == "/api/estado":
             return {"nome": NOME, "versao": VERSAO, "max_canais": MAX_CANAIS, "redirect": self.redirect,
                     **m.estado()}
         if caminho == "/api/config":
-            return m.config.publico()
-        if caminho == "/api/ranking":
-            horas = float((q.get("horas") or ["0"])[0]) or None
-            return m.banco.ranking(limite=int((q.get("limite") or ["100"])[0]), horas=horas)
+            return {**m.config.publico(), "_cam_presets": CAM_PRESETS, "_categorias": editorial.NOMES_CATEGORIAS,
+                    "_status_autorizacao": STATUS_AUTORIZACAO}
+        if caminho in ("/api/ranking", "/api/biblioteca"):
+            return m.banco.biblioteca(limite=int(_num(q, "limite", 200)), horas=_num(q, "horas") or None,
+                                      canal=_txt(q, "canal") or None, categoria=_txt(q, "categoria") or None,
+                                      estado=_txt(q, "estado") or None,
+                                      ordenar=_txt(q, "ordenar") or ("pico" if caminho == "/api/ranking" else "editorial"))
+        if mm := re.fullmatch(r"/api/corte/(\d+)", caminho):
+            c = m.banco.corte(int(mm.group(1)))
+            if not c:
+                raise KeyError(caminho)
+            c["historico"] = m.banco.historico_de(c["id"])
+            c["postagens"] = m.banco.postagens_de(c["id"])
+            return c
+        if mm := re.fullmatch(r"/api/editor/(\d+)", caminho):
+            return m.editor(int(mm.group(1)))
+        if caminho == "/api/fila":
+            ag = m.config.get("agendador")
+            plats = {}
+            for p in NOMES:
+                bons, fora = m.candidatos(p, ag)
+                plats[p] = {"proximos": [_resumo(c) for c in bons[:10]],
+                            "bloqueados": [{**_resumo(c), "motivo": c["_fora"]} for c in fora[:20]]}
+            return {"modo": ag.get("modo"), "ativo": ag.get("ativo"), "plataformas": plats,
+                    "incertos": m.banco.postagens_status("incerto"),
+                    "processando": m.banco.postagens_status("processando"),
+                    "revisao": [_resumo(c) for c in m.banco.biblioteca(limite=50, estado="aguardando_revisao")],
+                    "aprovados": [_resumo(c) for c in m.banco.biblioteca(limite=50, estado="aprovado")],
+                    "andamento": [_resumo(c) for c in m.banco.biblioteca(limite=50, estado="andamento", ordenar="recente")],
+                    "falhas": [_resumo(c) for c in m.banco.biblioteca(limite=50, estado="falhou", ordenar="recente")]}
         if caminho == "/api/log":
             return m.banco.log()
         if caminho == "/api/eventos":
-            return m.banco.eventos()
+            return m.banco.eventos(nivel=_txt(q, "nivel") or None)
+        if caminho == "/api/analytics":
+            return analytics.relatorio(m.banco)
+        if caminho == "/api/diagnostico":
+            return diagnostico.coletar(m)
         raise KeyError(caminho)
 
+    # ----- ações
     def post(self, caminho, corpo):
         m, cfg = self.motor, self.motor.config
         if caminho == "/api/canais":
             canais = []
+            atuais = {c["nome"]: c for c in cfg.get("canais")}
             for c in corpo.get("canais", [])[:MAX_CANAIS]:
-                nome = re.sub(r"[^a-z0-9_]", "", str(c.get("nome", "")).lower().split("/")[-1])
-                if nome:
-                    canais.append({"nome": nome, "plataforma": "twitch", "layout": c.get("layout", "blur"),
-                                   "ativo": bool(c.get("ativo", True)), "cam": c.get("cam")})
+                nome = re.sub(r"[^a-z0-9_]", "", str(c.get("nome", "")).lower().rstrip("/").split("/")[-1])[:25]
+                if not nome:
+                    continue
+                aut = dict((atuais.get(nome) or {}).get("autorizacao") or {})
+                aut.update({k: v for k, v in (c.get("autorizacao") or {}).items()
+                            if k in ("status", "data_registro", "data_autorizacao", "validade", "observacoes",
+                                     "gravar", "editar", "publicar", "redes")})
+                if aut.get("status") == "autorizado" and not aut.get("data_registro"):
+                    from datetime import date
+                    aut["data_registro"] = date.today().isoformat()
+                aut["observacoes"] = str(aut.get("observacoes", ""))[:500]
+                layout = c.get("layout") if c.get("layout") in ("blur", "split") else "blur"
+                canais.append(normalizar_canal({"nome": nome, "plataforma": "twitch", "layout": layout,
+                                                "ativo": bool(c.get("ativo", True)), "cam": cam_valida(c.get("cam")),
+                                                "autorizacao": aut}))
             cfg.salvar("canais", canais)
             m.sincronizar_canais()
-            return {"ok": True, "canais": canais}
+            return {"ok": True, "canais": cfg.get("canais")}
         if mm := re.fullmatch(r"/api/config/(\w+)", caminho):
             secao = mm.group(1)
-            if secao not in ("gravacao", "deteccao", "agendador", "youtube", "tiktok", "facebook", "gemini",
-                             "telegram"):
+            if secao not in SECOES or not isinstance(corpo, dict):
                 raise KeyError(secao)
             cfg.salvar(secao, corpo)
             return {"ok": True}
@@ -110,37 +179,73 @@ class Painel:
             for k in campos:
                 cfg.apagar_segredo(p, k)
             return {"ok": True}
+        if mm := re.fullmatch(r"/api/retomar/(\w+)", caminho):
+            if mm.group(1) not in NOMES:
+                raise KeyError(caminho)
+            m.retomar(mm.group(1))
+            return {"ok": True, "msg": f"{NOMES[mm.group(1)]} retomado"}
+        if mm := re.fullmatch(r"/api/postagem/(\d+)/resolver", caminho):
+            p = m.banco.postagem(int(mm.group(1)))
+            if not p or p["status"] != "incerto":
+                raise KeyError(caminho)
+            url = str(corpo.get("url") or "")[:300]
+            if url and not url.startswith("https://"):
+                raise ValueError("link inválido")
+            m.banco.resolver_incerto(p["id"], bool(corpo.get("publicado")), url)
+            return {"ok": True}
         if caminho == "/api/encerrar":
             if self.ao_encerrar:
                 threading.Timer(0.5, self.ao_encerrar).start()
             return {"ok": True}
         if caminho == "/api/clipar":
-            return {"ok": m.clipar_agora(corpo["canal"])}
+            return {"ok": m.clipar_agora(str(corpo.get("canal", "")))}
         if mm := re.fullmatch(r"/api/corte/(\d+)/(\w+)", caminho):
-            cid, acao = int(mm.group(1)), mm.group(2)
-            corte = m.banco.corte(cid)
-            if not corte:
-                raise KeyError(cid)
-            if acao == "postar":
-                res = {}
-                for p in corpo.get("plataformas", []):
-                    try:
-                        res[p] = {"ok": True, "url": m.postar(corte, p, origem="manual")}
-                    except Exception as e:  # noqa: BLE001
-                        res[p] = {"ok": False, "erro": str(e)}
-                return res
-            if acao == "descartar":
-                m.banco.descartar(cid, bool(corpo.get("sim", True)))
-                return {"ok": True}
-            if acao == "regerar":
-                return m.regerar_textos(cid)
-            if acao == "textos":
-                tags = corpo.get("hashtags", [])
-                if isinstance(tags, str):
-                    tags = [t for t in re.split(r"[\s,]+", tags) if t]
-                tags = ["#" + t.lstrip("#") for t in tags]
-                m.banco.atualizar_textos(cid, corpo.get("titulo", "")[:100], corpo.get("legenda", ""), tags)
-                return {"ok": True}
+            return self._acao_corte(int(mm.group(1)), mm.group(2), corpo)
+        return self._contas(caminho, corpo)
+
+    def _acao_corte(self, cid, acao, corpo):
+        m = self.motor
+        corte = m.banco.corte(cid)
+        if not corte:
+            raise KeyError(cid)
+        if acao == "postar":
+            res = {}
+            for p in corpo.get("plataformas", []):
+                if p not in NOMES:
+                    continue
+                try:
+                    url = m.postar(m.banco.corte(cid), p, origem="manual", forcar=bool(corpo.get("forcar")),
+                                   ignorar_autorizacao=bool(corpo.get("ignorar_autorizacao")))
+                    res[p] = {"ok": True, "url": url}
+                except Exception as e:  # noqa: BLE001
+                    res[p] = {"ok": False, "erro": seguranca.redigir(e)}
+            return res
+        if acao == "descartar":
+            m.banco.descartar(cid, bool(corpo.get("sim", True)), str(corpo.get("motivo", ""))[:200])
+            return {"ok": True}
+        if acao in ("aprovar", "desaprovar"):
+            if corte["estado"] not in ("aguardando_revisao", "aprovado"):
+                raise ValueError("só cortes prontos podem ser aprovados")
+            m.banco.aprovar(cid, acao == "aprovar")
+            return {"ok": True}
+        if acao in ("regerar", "reanalisar"):
+            return m.regerar_textos(cid)
+        if acao == "reprocessar":
+            return {"ok": True, "estado": m.reprocessar(cid)}
+        if acao == "remontar":
+            c = m.remontar(cid, segmentos=corpo.get("segmentos"), ini=corpo.get("ini"), fim=corpo.get("fim"))
+            return {"ok": True, "versao": c.get("versao_render"), "duracao": c.get("duracao")}
+        if acao == "textos":
+            tags = corpo.get("hashtags", [])
+            if isinstance(tags, str):
+                tags = [t for t in re.split(r"[\s,]+", tags) if t]
+            tags = ["#" + re.sub(r"[^\wÀ-ÿ]", "", t.lstrip("#"))[:40] for t in tags if t.strip("#")][:15]
+            m.banco.atualizar_textos(cid, str(corpo.get("titulo", ""))[:100], str(corpo.get("legenda", ""))[:2000], tags)
+            return {"ok": True}
+        raise KeyError(acao)
+
+    def _contas(self, caminho, corpo):
+        cfg = self.motor.config
         if caminho == "/api/youtube/login":
             y = cfg.get("youtube")
             if not y.get("client_id") or not y.get("client_secret"):
@@ -177,6 +282,7 @@ class Painel:
         if caminho == "/api/facebook/escolher":
             p = self.fb_paginas[corpo["id"]]
             cfg.salvar("facebook", {"page_id": p["id"], "page_nome": p["nome"], "page_token": p["token"]})
+            self.fb_paginas = {}
             return {"ok": True, "msg": f"Página escolhida: {p['nome']}"}
         if caminho == "/api/facebook/testar":
             return {"msg": facebook.testar(cfg.get("facebook"))}
@@ -184,6 +290,7 @@ class Painel:
             g = cfg.get("gemini")
             t = ia.gerar_textos("teste", "Meu Deus, que jogada! Ganhei a partida no último segundo!",
                                 ["KKKKKK", "QUE ISSO", "clipa"], g.get("api_key"), g.get("modelo"))
+            self.motor.ia_status = {"ok": True, "quando": time.time(), "erro": ""}
             return {"msg": f"Funcionando. Exemplo: {t['titulo']}"}
         if caminho == "/api/telegram/descobrir":
             chat = telegram.descobrir_chat(cfg.get("telegram"))
@@ -200,16 +307,23 @@ class Painel:
 
         class H(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
+            server_version = "CortesEX"
+            sys_version = ""
 
             def log_message(self, *a):
                 pass
 
+            def _cabecalhos(self):
+                for k, v in seguranca.CABECALHOS.items():
+                    self.send_header(k, v)
+
             def _json(self, dados, status=200):
-                b = json.dumps(dados, ensure_ascii=False).encode()
+                b = json.dumps(dados, ensure_ascii=False, default=str).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(b)))
                 self.send_header("Cache-Control", "no-store")
+                self._cabecalhos()
                 self.end_headers()
                 self.wfile.write(b)
 
@@ -218,10 +332,20 @@ class Painel:
                 self.send_response(200)
                 self.send_header("Content-Type", tipo)
                 self.send_header("Content-Length", str(len(b)))
+                self.send_header("Cache-Control", "no-store")
+                self._cabecalhos()
                 self.end_headers()
                 self.wfile.write(b)
 
+            def _host_ok(self):
+                if seguranca.host_permitido(self.headers.get("Host"), painel.porta):
+                    return True
+                self._json({"erro": "host não permitido"}, 403)
+                return False
+
             def do_GET(self):
+                if not self._host_ok():
+                    return
                 u = urllib.parse.urlparse(self.path)
                 q = urllib.parse.parse_qs(u.query)
                 try:
@@ -231,8 +355,10 @@ class Painel:
                         return self._arquivo(WEB / "index.html", "text/html; charset=utf-8")
                     if mm := re.fullmatch(r"/video/(\d+)", u.path):
                         c = painel.motor.banco.corte(int(mm.group(1)))
-                        if c and Path(c["arquivo"]).exists():
-                            return self._video(Path(c["arquivo"]))
+                        if c:
+                            arq = arquivos(c)["original" if (q.get("v") or [""])[0] == "original" else "video"]
+                            if arq.exists() and seguranca.dentro_de(arq, painel.motor.pasta):
+                                return self._video(arq)
                         return self._json({"erro": "vídeo não encontrado"}, 404)
                     if u.path.startswith("/api/"):
                         return self._json(painel.get(u.path, q))
@@ -241,22 +367,32 @@ class Painel:
                     return self._json({"erro": "não encontrado"}, 404)
                 except Exception as e:  # noqa: BLE001
                     log.exception("erro na API")
-                    return self._json({"erro": str(e)}, 500)
+                    return self._json({"erro": seguranca.redigir(e)}, 500)
 
             def do_POST(self):
                 n = int(self.headers.get("Content-Length") or 0)
+                if n > 2_000_000:
+                    return self._json({"erro": "pedido grande demais"}, 413)
                 bruto = self.rfile.read(n) if n else b""
-                # Só o próprio painel manda esse cabeçalho; outro site não consegue (CORS).
-                if self.headers.get("X-CortesEX") != "1":
+                if not self._host_ok():
+                    return
+                # Só o próprio painel manda esse cabeçalho; outro site não consegue sem CORS.
+                if self.headers.get("X-CortesEX") != "1" or \
+                        not seguranca.origem_permitida(self.headers.get("Origin"), painel.porta):
                     return self._json({"erro": "proibido"}, 403)
                 try:
                     corpo = json.loads(bruto or b"{}")
                     return self._json(painel.post(urllib.parse.urlparse(self.path).path, corpo))
                 except KeyError as e:
-                    return self._json({"erro": f"não encontrado: {e}"}, 404)
+                    return self._json({"erro": f"não encontrado: {seguranca.redigir(e)}"}, 404)
                 except Exception as e:  # noqa: BLE001
-                    log.warning("API %s: %s", self.path, e)
-                    return self._json({"erro": str(e)}, 400)
+                    log.warning("API %s: %s", urllib.parse.urlparse(self.path).path, seguranca.redigir(e))
+                    return self._json({"erro": seguranca.redigir(e)}, 400)
+
+            def do_PUT(self):
+                return self._json({"erro": "método não permitido"}, 405)
+
+            do_DELETE = do_PATCH = do_PUT
 
             def _callback(self, q):
                 estado = (q.get("state") or [""])[0]
@@ -265,11 +401,12 @@ class Painel:
                     msg = painel.concluir_login(plat, q["code"][0], estado)
                     ok = True
                 except Exception as e:  # noqa: BLE001
-                    msg, ok = str(e), False
+                    msg, ok = seguranca.redigir(e), False
                 destino = "/#contas?" + urllib.parse.urlencode({"ok" if ok else "erro": msg})
                 self.send_response(303)
                 self.send_header("Location", destino)
                 self.send_header("Content-Length", "0")
+                self._cabecalhos()
                 self.end_headers()
 
             def _video(self, p: Path):
@@ -278,7 +415,7 @@ class Painel:
                 m = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
                 if m and (m.group(1) or m.group(2)):
                     if m.group(1):
-                        ini = int(m.group(1))
+                        ini = min(int(m.group(1)), tam - 1)
                         fim = min(int(m.group(2)) if m.group(2) else tam - 1, tam - 1)
                     else:
                         ini = max(tam - int(m.group(2)), 0)
@@ -289,6 +426,7 @@ class Painel:
                 self.send_header("Content-Type", "video/mp4")
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Length", str(fim - ini + 1))
+                self._cabecalhos()
                 self.end_headers()
                 try:
                     with open(p, "rb") as f:
@@ -311,3 +449,8 @@ class Painel:
         threading.Thread(target=srv.serve_forever, daemon=True, name="painel").start()
         log.info("painel em %s", self.redirect)
         return srv
+
+
+def _resumo(c: dict) -> dict:
+    return {k: c.get(k) for k in ("id", "canal", "titulo", "score", "score_editorial", "confianca", "categoria",
+                                   "estado", "criado", "duracao", "erro", "proxima_acao", "flags")}

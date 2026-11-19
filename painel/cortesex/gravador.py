@@ -29,6 +29,18 @@ STOPWORDS = set("a o e de da do que é eu ele ela não nao no na um uma pra pq q
 FORMATO_BLOCO = "%Y%m%d-%H%M%S"   # nome dos blocos (o Windows não aceita %s no strftime)
 
 
+def listar_segmentos(pasta: Path):
+    """Blocos gravados [(epoch, caminho)] em ordem, lidos do disco (servem mesmo após reiniciar)."""
+    out = []
+    for p in Path(pasta).glob("*.ts"):
+        try:
+            out.append((time.mktime(time.strptime(p.stem, FORMATO_BLOCO)), p))
+        except ValueError:
+            pass
+    out.sort()
+    return out
+
+
 def palavras_frequentes(msgs, n=8):
     c = Counter()
     for t in msgs:
@@ -39,13 +51,18 @@ def palavras_frequentes(msgs, n=8):
 
 
 class Canal:
-    def __init__(self, cfg_canal: dict, config, pasta: Path, agendar_corte, avisar=None):
+    def __init__(self, cfg_canal: dict, config, pasta: Path, agendar_corte, avisar=None, pode_gravar=None):
         self.nome = cfg_canal["nome"].lower().strip().lstrip("@")
         self.layout = cfg_canal.get("layout", "blur")
         self.cam = cfg_canal.get("cam")
         self.config = config
         self.agendar_corte = agendar_corte
         self.avisar = avisar or (lambda nivel, texto: None)
+        self.pode_gravar = pode_gravar or (lambda: True)
+        self.reinicios = 0              # reinícios forçados por travamento
+        self.falhas_seguidas = 0
+        self.ultimo_erro = ""
+        self.ultimo_bloco = 0.0
         self.dir_seg = pasta / "buffer" / self.nome
         self.dir_cortes = pasta / "cortes" / self.nome
         self.dir_seg.mkdir(parents=True, exist_ok=True)
@@ -79,14 +96,7 @@ class Canal:
 
     # ----- estado
     def segmentos(self):
-        out = []
-        for p in self.dir_seg.glob("*.ts"):
-            try:
-                out.append((time.mktime(time.strptime(p.stem, FORMATO_BLOCO)), p))
-            except ValueError:
-                pass
-        out.sort()
-        return out
+        return listar_segmentos(self.dir_seg)
 
     @property
     def ao_vivo(self):
@@ -97,26 +107,38 @@ class Canal:
 
     def estado(self):
         return {"nome": self.nome, "ao_vivo": self.ao_vivo, "chat": self.inicio_chat is not None,
-                "taxa": round(self.taxa_atual, 1), "normal": round(self.baseline or 0, 1)}
+                "taxa": round(self.taxa_atual, 1), "normal": round(self.baseline or 0, 1),
+                "gravando": self.gravando, "reinicios": self.reinicios, "falhas_seguidas": self.falhas_seguidas,
+                "ultimo_bloco": self.ultimo_bloco, "ultimo_erro": self.ultimo_erro}
 
     # ----- gravação (streamlink -> ffmpeg em blocos de 4 s)
     def _loop_gravar(self):
+        """Supervisor da gravação: reinicia com espera crescente (30 s → 5 min) quando falha seguido."""
         avisou = False
         while not self.parar.is_set():
+            if not self.pode_gravar():
+                self.parar.wait(30)
+                continue
             G = self.config.get("gravacao")
             inicio = time.time()
             try:
                 self._gravar_uma_vez(G["qualidade"])
             except Exception as e:  # noqa: BLE001
+                self.ultimo_erro = str(e)[:200]
                 if not avisou:
                     log.info("[%s] offline ou indisponível (%s)", self.nome, str(e)[:120])
                     avisou = True
             finally:
                 self.gravando = False
             if time.time() - inicio > 60:
-                log.info("[%s] gravação encerrada (live acabou ou caiu)", self.nome)
+                log.info("[%s] gravação encerrada (live acabou, caiu ou travou)", self.nome)
                 avisou = False
-            self.parar.wait(5 if time.time() - inicio > 60 else 30)
+                self.falhas_seguidas = 0
+                espera = 5
+            else:
+                self.falhas_seguidas += 1
+                espera = util.backoff(self.falhas_seguidas, base=30, maximo=300, jitter=0.1)
+            self.parar.wait(espera)
 
     def _gravar_uma_vez(self, qualidade):
         """streamlink num processo separado (como o script original), ffmpeg corta em blocos."""
@@ -137,10 +159,25 @@ class Canal:
             os.close(r)
             os.close(w)
         inicio = time.time()
+        travado_desde = None
         while self._fluxo.poll() is None and not self.parar.is_set():
-            if not self.gravando and time.time() - inicio > 8 and self.segmentos():
+            segs = self.segmentos()
+            if segs:
+                self.ultimo_bloco = segs[-1][0]
+            if not self.gravando and time.time() - inicio > 8 and segs:
                 self.gravando = True
                 log.info("[%s] ao vivo: gravando", self.nome)
+            # travamento: o streamlink está vivo mas nenhum bloco novo há 45 s
+            parado = time.time() - max(self.ultimo_bloco, inicio)
+            if parado > 45:
+                travado_desde = travado_desde or time.time()
+                log.warning("[%s] gravação travada (%.0f s sem blocos novos): reiniciando", self.nome, parado)
+                self.reinicios += 1
+                break
+            if self._ff.poll() is not None:
+                log.warning("[%s] o ffmpeg da gravação parou: reiniciando", self.nome)
+                self.reinicios += 1
+                break
             self.parar.wait(1)
         if self._fluxo.poll() is None:
             self._fluxo.kill()

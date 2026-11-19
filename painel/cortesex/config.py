@@ -1,8 +1,10 @@
-"""Configuração do painel, guardada num JSON na pasta de dados do usuário.
+"""Configuração do painel (config.json) e chaves (cofre segredos.dat), na pasta de dados do usuário.
 
-As chaves (YouTube, TikTok, Facebook, Gemini, Telegram) ficam só neste
-computador, no arquivo config.json da pasta de dados. A API do painel nunca
-devolve uma chave inteira: devolve só se ela está preenchida.
+As chaves (YouTube, TikTok, Facebook, Gemini, Telegram) ficam no cofre: cifradas com a DPAPI no
+Windows. O config.json guarda só o resto. A API do painel nunca devolve uma chave: só se ela existe.
+
+Compatibilidade: um config.json antigo (até a 1.x), que tinha as chaves dentro, é migrado sozinho
+na primeira abertura: as chaves vão para o cofre, o cofre é conferido, e só então saem do JSON.
 """
 
 import copy
@@ -12,7 +14,8 @@ import sys
 import threading
 from pathlib import Path
 
-from cortesex import MAX_CANAIS, NOME
+from cortesex import MAX_CANAIS, NOME, seguranca
+from cortesex.segredos import Cofre, protegido
 
 SEGREDOS = {
     ("youtube", "client_secret"), ("youtube", "refresh_token"),
@@ -21,8 +24,23 @@ SEGREDOS = {
     ("gemini", "api_key"), ("telegram", "bot_token"),
 }
 
+MODOS = ("manual", "semiautomatico", "automatico")
+STATUS_AUTORIZACAO = ("nao_registrada", "pendente", "autorizado", "negado", "revogada")
+
+AUTORIZACAO_PADRAO = {
+    "status": "nao_registrada",      # o usuário registra; o programa não presume nada
+    "data_registro": "",
+    "data_autorizacao": "",
+    "validade": "",                  # AAAA-MM-DD; vazio = sem validade
+    "observacoes": "",
+    "gravar": True,
+    "editar": True,
+    "publicar": False,
+    "redes": [],                     # ["youtube", "tiktok", "facebook"]
+}
+
 PADRAO = {
-    "canais": [],  # [{"nome": "alanzoka", "plataforma": "twitch", "layout": "blur", "ativo": True}]
+    "canais": [],  # [{"nome", "plataforma", "layout", "ativo", "cam", "autorizacao"}]
     "gravacao": {
         "qualidade": "720p60,720p,best",
         "buffer_minutos": 15,
@@ -41,19 +59,60 @@ PADRAO = {
         "antes_segundos": 40,
         "depois_segundos": 15,
         "aquecimento_segundos": 90,
+        "agrupar_segundos": 30,       # picos a menos disso do anterior (ainda não capturado) viram um evento só
+    },
+    "corte": {
+        "adaptativo": True,           # início/fim em pausas da fala, dentro dos limites abaixo
+        "duracao_min": 20,
+        "duracao_max": 90,
+        "contexto_antes_max": 60,     # quanto antes do pico a fonte guarda
+        "contexto_depois_max": 30,
+    },
+    "legendas": {
+        "estilo": "classico",         # classico | impacto | narrativo
+        "fonte": "DejaVu Sans",
+        "tamanho": 74,
+        "cor": "#FFFFFF",
+        "cor_destaque": "#FFD23F",
+        "contorno": 6,
+        "posicao": "baixo",           # baixo | meio | alto
+        "margem_inferior": 420,       # px a partir de baixo (área segura dos botões das redes)
+        "margem_lateral": 90,
+        "max_caracteres": 22,
+        "animacao": True,
+    },
+    "pontuacao": {
+        "versao": 1,
+        "pesos": {"chat": 20, "reacao": 20, "contexto": 20, "entretenimento": 15,
+                  "audio": 10, "inicio_fim": 10, "retencao": 5},
+    },
+    "processamento": {
+        "workers_montagem": 1,        # cortes montados ao mesmo tempo (FFmpeg + Whisper)
+        "timeout_ffmpeg": 900,
+        "tentativas_etapa": 3,
+    },
+    "armazenamento": {
+        "dias_guardar_fontes": 3,     # janela larga usada para re-render e editor de legendas
+        "manter_publicados": False,
+        "minimo_livre_gb": 5,
     },
     "agendador": {
         "ativo": False,
-        "quantidade": 1,          # quantos vídeos...
-        "periodo": "hora",        # ...por "hora" ou por "dia"
-        "hora_inicio": 0,         # janela em que pode postar (hora local)
+        "modo": "semiautomatico",     # manual | semiautomatico | automatico
+        "quantidade": 1,
+        "periodo": "hora",
+        "hora_inicio": 0,
         "hora_fim": 24,
-        "dias": [0, 1, 2, 3, 4, 5, 6],  # 0 = segunda
-        "score_minimo": 2.5,
-        "horas_validade": 24,     # só posta cortes mais novos que isso
+        "dias": [0, 1, 2, 3, 4, 5, 6],
+        "score_minimo": 2.5,          # nota do pico (x acima do normal)
+        "score_editorial_minimo": 0,  # 0–100; 0 = não filtra
+        "ordenar_por": "editorial",   # editorial | pico | recente
+        "evitar_mesmo_canal_seguido": False,
+        "horas_validade": 24,
         "exigir_textos_ia": True,
         "plataformas": {"youtube": True, "tiktok": False, "facebook": False},
     },
+    "analytics": {"ativo": True, "horas_entre_coletas": 6, "dias_acompanhar": 30},
     "youtube": {"client_id": "", "client_secret": "", "refresh_token": "", "canal": "", "redirect_uri": "",
                 "privacidade": "public", "categoria": "20"},
     "tiktok": {"client_key": "", "client_secret": "", "refresh_token": "", "access_token": "",
@@ -84,46 +143,107 @@ def _mesclar(base: dict, novo: dict) -> dict:
     return base
 
 
+def normalizar_canal(c: dict) -> dict:
+    c = dict(c)
+    aut = copy.deepcopy(AUTORIZACAO_PADRAO)
+    aut.update(c.get("autorizacao") or {})
+    if aut["status"] not in STATUS_AUTORIZACAO:
+        aut["status"] = "nao_registrada"
+    aut["redes"] = [r for r in aut.get("redes") or [] if r in ("youtube", "tiktok", "facebook")]
+    c["autorizacao"] = aut
+    c.setdefault("plataforma", "twitch")
+    c.setdefault("layout", "blur")
+    c.setdefault("ativo", True)
+    return c
+
+
 class Config:
-    def __init__(self, arquivo: Path | None = None):
+    def __init__(self, arquivo: Path | None = None, cofre: Cofre | None = None):
         self.arquivo = arquivo or pasta_dados() / "config.json"
+        self.cofre = cofre or Cofre(self.arquivo.with_name("segredos.dat"))
         self._lock = threading.RLock()
         self.dados = copy.deepcopy(PADRAO)
-        if self.arquivo.exists():
+        self.migracoes: list[str] = []
+        existia = self.arquivo.exists()
+        lido = {}
+        if existia:
             try:
-                _mesclar(self.dados, json.loads(self.arquivo.read_text(encoding="utf-8")))
+                lido = json.loads(self.arquivo.read_text(encoding="utf-8"))
+                _mesclar(self.dados, lido)
             except (ValueError, OSError):
-                pass
+                lido = {}
+        self.dados["canais"] = [normalizar_canal(c) for c in self.dados.get("canais", [])][:MAX_CANAIS]
+        if existia and "modo" not in (lido.get("agendador") or {}):
+            # 1.x não tinha modos: quem já postava automático continua automático.
+            self.dados["agendador"]["modo"] = "automatico" if self.dados["agendador"].get("ativo") else "semiautomatico"
+            self.migracoes.append(f"modo do agendador definido como {self.dados['agendador']['modo']}")
+        self._migrar_segredos()
+        for secao, chave in SEGREDOS:
+            seguranca.registrar_segredo(self.cofre.get(secao, chave))
+        if existia and self.migracoes:
+            self._gravar()
+
+    def _migrar_segredos(self):
+        achados = {}
+        for secao, chave in SEGREDOS:
+            v = (self.dados.get(secao) or {}).get(chave)
+            if v:
+                achados[f"{secao}.{chave}"] = v
+        if not achados:
+            return
+        self.cofre.definir(achados)      # grava e confere antes de tirar do JSON
+        for k in achados:
+            secao, chave = k.split(".")
+            self.dados[secao][chave] = ""
+        self.migracoes.append(f"{len(achados)} chave(s) movidas do config.json para o cofre")
 
     def get(self, secao: str, chave: str | None = None, padrao=None):
         with self._lock:
-            valor = self.dados.get(secao, padrao)
-            if chave is None:
-                return copy.deepcopy(valor)
-            return copy.deepcopy(valor.get(chave, padrao)) if isinstance(valor, dict) else padrao
+            valor = copy.deepcopy(self.dados.get(secao, padrao))
+        if isinstance(valor, dict):
+            for s, k in SEGREDOS:
+                if s == secao:
+                    valor[k] = self.cofre.get(s, k)
+        if chave is None:
+            return valor
+        return valor.get(chave, padrao) if isinstance(valor, dict) else padrao
 
     def salvar(self, secao: str, valores) -> None:
         """Grava uma seção. Campos secretos vazios não apagam o valor guardado."""
         with self._lock:
             if isinstance(valores, dict) and isinstance(self.dados.get(secao), dict):
+                novos_segredos = {}
                 for k, v in valores.items():
-                    if (secao, k) in SEGREDOS and v in ("", None):
+                    if (secao, k) in SEGREDOS:
+                        if v not in ("", None, True, False):
+                            novos_segredos[f"{secao}.{k}"] = v
+                            seguranca.registrar_segredo(str(v))
                         continue
-                    self.dados[secao][k] = v
+                    if isinstance(v, dict) and isinstance(self.dados[secao].get(k), dict):
+                        _mesclar(self.dados[secao][k], v)
+                    else:
+                        self.dados[secao][k] = v
+                if novos_segredos:
+                    self.cofre.definir(novos_segredos)
             else:
                 self.dados[secao] = valores
             if secao == "canais":
-                self.dados["canais"] = self.dados["canais"][:MAX_CANAIS]
+                self.dados["canais"] = [normalizar_canal(c) for c in self.dados["canais"]][:MAX_CANAIS]
+            if secao == "agendador" and self.dados["agendador"].get("modo") not in MODOS:
+                self.dados["agendador"]["modo"] = "semiautomatico"
             self._gravar()
 
     def apagar_segredo(self, secao: str, chave: str) -> None:
-        with self._lock:
-            self.dados[secao][chave] = ""
-            self._gravar()
+        self.cofre.definir({f"{secao}.{chave}": ""})
 
     def _gravar(self) -> None:
+        with self._lock:
+            dados = copy.deepcopy(self.dados)
+        for secao, chave in SEGREDOS:     # nunca escreve chave no JSON
+            if secao in dados and chave in dados[secao]:
+                dados[secao][chave] = ""
         tmp = self.arquivo.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.dados, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, self.arquivo)
 
     def publico(self) -> dict:
@@ -132,5 +252,12 @@ class Config:
             d = copy.deepcopy(self.dados)
         for secao, chave in SEGREDOS:
             if secao in d and chave in d[secao]:
-                d[secao][chave] = bool(d[secao][chave])
+                d[secao][chave] = bool(self.cofre.get(secao, chave))
+        d["_cofre"] = {"cifrado": protegido(), "erro": self.cofre.erro}
         return d
+
+    def canal(self, nome: str) -> dict | None:
+        for c in self.get("canais"):
+            if c.get("nome") == nome:
+                return c
+        return None

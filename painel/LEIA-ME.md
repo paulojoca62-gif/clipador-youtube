@@ -1,5 +1,10 @@
 # CortesEX-PRESS
 
+> **Versão 2.0**: pipeline persistente com retomada, corte adaptativo, nota editorial 0–100, editor de
+> legendas com 3 estilos, autorização por canal, modos manual/semiautomático/automático, chaves cifradas
+> (DPAPI), painel protegido contra DNS rebinding, analytics do YouTube e aba Diagnóstico.
+> Detalhes, riscos e o roteiro de validação real em [`docs/evolution-2.0/`](docs/evolution-2.0/).
+
 Vigia até 5 canais da Twitch, corta a live quando o chat explode, escreve
 título, legenda e hashtags com o Gemini e posta os melhores cortes no
 YouTube Shorts, no TikTok e numa Página do Facebook, no ritmo que você
@@ -7,8 +12,8 @@ escolher.
 
 ## Instalar no Windows
 
-1. Abra a página de releases do repositório e baixe
-   **CortesEX-PRESS-Instalador.exe** (release `cortesex-latest`).
+1. Baixe **CortesEX-PRESS-Instalador.exe**: no release `cortesex-latest` (quando publicado pelo dono, rodando o
+   workflow à mão com "publicar") ou nos artefatos da última execução do workflow "CortesEX-PRESS (Windows)".
 2. Rode o instalador. Ele não pede administrador e cria o atalho
    **CortesEX-PRESS** na área de trabalho.
 3. Abra pelo atalho: o painel abre no navegador, em `http://127.0.0.1:8777`.

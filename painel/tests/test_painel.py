@@ -10,19 +10,7 @@ from cortesex.plataformas import ErroPostagem
 from cortesex.servidor import extrair_codigo
 
 
-@pytest.fixture
-def ambiente(tmp_path, monkeypatch):
-    monkeypatch.setenv("CORTESEX_DADOS", str(tmp_path))
-    c = cfgmod.Config(tmp_path / "config.json")
-    m = motor.Motor(config=c, pasta=tmp_path)
-    return m, tmp_path
-
-
-def corte(m, pasta, score, titulo="TÍTULO", horas_atras=0.1, canal="alanzoka"):
-    arq = pasta / f"c{score}_{time.time_ns()}.mp4"
-    arq.write_bytes(b"x")
-    return m.banco.novo_corte(canal, arq, time.time() - horas_atras * 3600, 55, score, "pico", ["kkk"], "fala",
-                              titulo, "legenda", ["#a"])
+from conftest import autorizar, corte
 
 
 def test_segredos_nao_saem_e_vazio_nao_apaga(tmp_path):
@@ -63,8 +51,11 @@ def test_janela_e_dias():
 def test_agendador_posta_o_melhor_e_respeita_regras(ambiente, monkeypatch):
     m, pasta = ambiente
     m.config.salvar("youtube", {"refresh_token": "r"})
-    m.config.salvar("agendador", {"ativo": True, "quantidade": 2, "periodo": "hora", "score_minimo": 2.5,
+    # 2.0: o modo automático e a autorização do canal passaram a ser exigidos para postar sozinho
+    m.config.salvar("agendador", {"ativo": True, "modo": "automatico", "quantidade": 2, "periodo": "hora",
+                                  "score_minimo": 2.5, "ordenar_por": "pico",
                                   "plataformas": {"youtube": True, "tiktok": False, "facebook": False}})
+    autorizar(m)
     baixo = corte(m, pasta, 2.0)
     melhor = corte(m, pasta, 3.4)
     medio = corte(m, pasta, 2.9)
@@ -86,14 +77,17 @@ def test_agendador_posta_o_melhor_e_respeita_regras(ambiente, monkeypatch):
 def test_limite_da_plataforma_pausa_e_registra(ambiente, monkeypatch):
     m, pasta = ambiente
     m.config.salvar("youtube", {"refresh_token": "r"})
-    m.config.salvar("agendador", {"ativo": True, "plataformas": {"youtube": True}})
+    m.config.salvar("agendador", {"ativo": True, "modo": "automatico", "plataformas": {"youtube": True}})
+    autorizar(m)
     corte(m, pasta, 3.0)
 
     def falha(cfg, c):
-        raise ErroPostagem("YouTube: limite do dia atingido", False)
+        raise ErroPostagem("YouTube: limite do dia atingido", False, "cota")
     monkeypatch.setattr(motor.youtube, "postar", falha)
     assert m.rodar_agendador() == []
-    assert m.pausa["youtube"][1].startswith("YouTube: limite")
+    pausa = m.banco.pausa("youtube")
+    assert pausa["motivo"].startswith("YouTube: limite") and pausa["tipo"] == "cota"
+    assert pausa["ate"] > time.time() + 3600 * 0.79   # cota: pausa longa (1 h com variação de ±20%)
     assert m.banco.log()[0]["status"] == "erro"
     assert m.estado()["plataformas"]["youtube"]["pausa"]
 
@@ -156,12 +150,14 @@ def test_completa_textos_que_faltaram(ambiente, monkeypatch):
         erro = next(falhas, None)
         if erro:
             raise erro
-        return {"titulo": "NOVO! 🔥", "legenda": "l", "hashtags": ["#x"]}
-    monkeypatch.setattr(motor.ia, "gerar_textos", gerar)
+        return {"titulo": "NOVO! 🔥", "legenda": "l", "hashtags": ["#x"],
+                "analise": {"categoria": "engracado", "notas": {"contexto": 8}, "riscos": []}}
+    monkeypatch.setattr(motor.ia, "analisar_e_escrever", gerar)
     assert m.completar_textos() == 0          # falhou uma vez
     assert m.tentativas_ia[sem] == 1
     assert m.completar_textos() == 1
     assert m.banco.corte(sem)["titulo"] == "NOVO! 🔥"
+    assert m.banco.corte(sem)["categoria"] == "engracado"
     assert m.banco.corte(com)["titulo"] == "TÍTULO"
 
 

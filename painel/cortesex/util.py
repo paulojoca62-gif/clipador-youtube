@@ -1,6 +1,7 @@
 """Caminhos de ferramentas e utilitários que funcionam igual no Windows e no Linux."""
 
 import os
+import random
 import shutil
 import ssl
 import subprocess
@@ -23,6 +24,20 @@ def ffmpeg() -> str:
         if cand.exists():
             return str(cand)
     return shutil.which("ffmpeg") or nome
+
+
+def ffprobe() -> str:
+    nome = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
+    for cand in (pasta_app() / "bin" / nome, Path(sys.executable).parent / "bin" / nome):
+        if cand.exists():
+            return str(cand)
+    return shutil.which("ffprobe") or ""
+
+
+def backoff(tentativa: int, base: float = 30, maximo: float = 3600, jitter: float = 0.2) -> float:
+    """Espera exponencial: base, 2x, 4x... até o máximo, com variação aleatória de ±jitter."""
+    espera = min(maximo, base * (2 ** max(tentativa - 1, 0)))
+    return max(1.0, espera * (1 + random.uniform(-jitter, jitter)))
 
 
 def comando_streamlink() -> list:
@@ -50,5 +65,9 @@ def contexto_ssl() -> ssl.SSLContext:
     return ctx
 
 
-def rodar(cmd, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, creationflags=SEM_JANELA, **kw)
+def rodar(cmd, timeout=None, **kw) -> subprocess.CompletedProcess:
+    """Roda um programa sem abrir janela. Se passar do timeout, mata e devolve código 124."""
+    try:
+        return subprocess.run(cmd, capture_output=True, creationflags=SEM_JANELA, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired as e:
+        return subprocess.CompletedProcess(cmd, 124, e.stdout or b"", (e.stderr or b"") + b"\n[tempo esgotado]")

@@ -13,7 +13,8 @@ from urllib.parse import urlencode
 
 import requests
 
-from cortesex.plataformas import ErroPostagem, texto_post, titulo
+from cortesex.plataformas import (AUTENTICACAO, COTA, MIDIA, PERMISSAO, PRIVACIDADE, PROCESSAMENTO, TEMPORARIO,
+                                  ErroPostagem, resultado, retry_after, texto_post, titulo)
 
 AUTH = "https://www.tiktok.com/v2/auth/authorize/"
 API = "https://open.tiktokapis.com/v2"
@@ -51,14 +52,15 @@ def trocar_codigo(cfg: dict, codigo: str, redirect_uri: str, verificador: str = 
     r = requests.post(f"{API}/oauth/token/", data=dados, timeout=30)
     j = r.json()
     if "access_token" not in j:
-        raise ErroPostagem(f"O TikTok não entregou o login: {j.get('error_description') or j.get('error')}", False)
+        raise ErroPostagem(f"O TikTok não entregou o login: {j.get('error_description') or j.get('error')}", False,
+                           AUTENTICACAO)
     return _guardar(cfg, j)
 
 
 def renovar(cfg: dict) -> dict | None:
     """Devolve os campos novos do token se precisou renovar, ou None."""
     if not cfg.get("refresh_token"):
-        raise ErroPostagem("TikTok não conectado. Abra Contas → TikTok e conecte.", False)
+        raise ErroPostagem("TikTok não conectado. Abra Configurações → TikTok e conecte.", False, AUTENTICACAO)
     if cfg.get("access_token") and time.time() < float(cfg.get("expira_em") or 0):
         return None
     r = requests.post(f"{API}/oauth/token/", data={
@@ -66,23 +68,42 @@ def renovar(cfg: dict) -> dict | None:
         "grant_type": "refresh_token", "refresh_token": cfg["refresh_token"]}, timeout=30)
     j = r.json()
     if "access_token" not in j:
-        raise ErroPostagem("O login do TikTok expirou. Conecte de novo em Contas → TikTok.", False)
+        raise ErroPostagem("O login do TikTok expirou. Conecte de novo em Configurações → TikTok.", False, AUTENTICACAO)
     return _guardar(cfg, j)
 
 
 def _api(cfg, caminho, corpo):
-    r = requests.post(f"{API}{caminho}", json=corpo, timeout=60,
-                      headers={"Authorization": f"Bearer {cfg['access_token']}",
-                               "Content-Type": "application/json; charset=UTF-8"})
-    j = r.json()
+    try:
+        r = requests.post(f"{API}{caminho}", json=corpo, timeout=60,
+                          headers={"Authorization": f"Bearer {cfg['access_token']}",
+                                   "Content-Type": "application/json; charset=UTF-8"})
+    except requests.RequestException as e:
+        raise ErroPostagem(f"TikTok: falha de rede ({type(e).__name__})", True, TEMPORARIO) from e
+    try:
+        j = r.json()
+    except ValueError:
+        raise ErroPostagem(f"TikTok respondeu sem JSON ({r.status_code})", True, TEMPORARIO, retry_after(r)) from None
     erro = (j.get("error") or {})
-    if erro.get("code") not in (None, "", "ok"):
-        if erro.get("code") == "unaudited_client_can_only_post_to_private_accounts":
+    codigo = erro.get("code")
+    if codigo not in (None, "", "ok"):
+        if codigo == "unaudited_client_can_only_post_to_private_accounts":
             raise ErroPostagem("TikTok: app sem auditoria só posta em conta PRIVADA. Deixe a conta privada "
-                               "ou peça a auditoria do app.", False)
-        if erro.get("code") in ("spam_risk_too_many_posts", "rate_limit_exceeded"):
-            raise ErroPostagem(f"TikTok: limite de posts atingido ({erro['code']}).", False)
-        raise ErroPostagem(f"TikTok: {erro.get('code')} {erro.get('message', '')}"[:300])
+                               "ou peça a auditoria do app.", False, PRIVACIDADE)
+        if codigo in ("spam_risk_too_many_posts", "spam_risk_user_banned_from_posting", "rate_limit_exceeded",
+                      "spam_risk_too_many_pending_share"):
+            raise ErroPostagem(f"TikTok: limite de posts atingido ({codigo}).", False, COTA, retry_after(r))
+        if codigo in ("access_token_invalid", "token_not_authorized_for_specified_endpoint"):
+            raise ErroPostagem(f"TikTok recusou o login ({codigo}). Conecte de novo.", False, AUTENTICACAO)
+        if codigo in ("scope_not_authorized", "scope_permission_missed"):
+            raise ErroPostagem(f"TikTok: falta permissão ({codigo}).", False, PERMISSAO)
+        if codigo in ("invalid_file_upload", "file_format_check_failed", "duration_check_failed",
+                      "frame_rate_check_failed", "picture_size_check_failed", "video_pull_failed"):
+            raise ErroPostagem(f"TikTok recusou o vídeo ({codigo}).", False, MIDIA)
+        if codigo == "privacy_level_option_mismatch":
+            raise ErroPostagem("TikTok: a privacidade pedida não é permitida para essa conta.", False, PRIVACIDADE)
+        if r.status_code >= 500:
+            raise ErroPostagem(f"TikTok instável ({codigo})", True, TEMPORARIO, retry_after(r))
+        raise ErroPostagem(f"TikTok: {codigo} {erro.get('message', '')}"[:300], True, PROCESSAMENTO)
     return j.get("data") or {}
 
 
@@ -96,25 +117,45 @@ def testar(cfg: dict) -> str:
             f"Privacidade permitida: {', '.join(d.get('privacy_level_options') or [])}")
 
 
-def postar(cfg: dict, corte: dict) -> str:
+def postar(cfg: dict, corte: dict) -> dict:
     d = info(cfg)
     opcoes = d.get("privacy_level_options") or ["SELF_ONLY"]
     privacidade = cfg.get("privacidade") if cfg.get("privacidade") in opcoes else (
         "PUBLIC_TO_EVERYONE" if "PUBLIC_TO_EVERYONE" in opcoes else opcoes[0])
     arq = corte["arquivo"]
     tamanho = os.path.getsize(arq)
-    legenda = f"{titulo(corte)}\n\n{texto_post(corte, limite=2000)}"[:2200]
+    legenda_tt = (corte.get("textos_plataforma") or {}).get("tiktok")
+    legenda = f"{titulo(corte)}\n\n{texto_post(corte, limite=2000, legenda=legenda_tt)}"[:2200]
     ini = _api(cfg, "/post/publish/video/init/", {
         "post_info": {"title": legenda, "privacy_level": privacidade, "disable_comment": False,
                       "disable_duet": False, "disable_stitch": False},
         "source_info": {"source": "FILE_UPLOAD", "video_size": tamanho, "chunk_size": tamanho,
                         "total_chunk_count": 1}})
-    with open(arq, "rb") as f:
-        r = requests.put(ini["upload_url"], data=f, timeout=900, headers={
-            "Content-Type": "video/mp4", "Content-Length": str(tamanho),
-            "Content-Range": f"bytes 0-{tamanho - 1}/{tamanho}"})
+    publish_id = ini.get("publish_id", "")
+    try:
+        with open(arq, "rb") as f:
+            r = requests.put(ini["upload_url"], data=f, timeout=900, headers={
+                "Content-Type": "video/mp4", "Content-Length": str(tamanho),
+                "Content-Range": f"bytes 0-{tamanho - 1}/{tamanho}"})
+    except requests.RequestException as e:
+        raise ErroPostagem(f"TikTok: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO) from e
     if r.status_code not in (200, 201):
-        raise ErroPostagem(f"TikTok: falha no envio do vídeo ({r.status_code})")
+        raise ErroPostagem(f"TikTok: falha no envio do vídeo ({r.status_code})", True, TEMPORARIO, retry_after(r))
     usuario = d.get("creator_username") or cfg.get("usuario") or ""
-    aviso = "" if privacidade == "PUBLIC_TO_EVERYONE" else f" [{privacidade}]"
-    return (f"https://www.tiktok.com/@{usuario}" if usuario else "TikTok") + aviso
+    detalhe = "" if privacidade == "PUBLIC_TO_EVERYONE" else f"privacidade {privacidade}"
+    return resultado(f"https://www.tiktok.com/@{usuario}" if usuario else "", publish_id, "processando", detalhe)
+
+
+def verificar(cfg: dict, ext_id: str) -> dict:
+    d = _api(cfg, "/post/publish/status/fetch/", {"publish_id": ext_id})
+    st = d.get("status", "")
+    usuario = cfg.get("usuario") or ""
+    ids = d.get("publicaly_available_post_id") or d.get("publicly_available_post_id") or []
+    url = (f"https://www.tiktok.com/@{usuario}/video/{ids[0]}" if ids and usuario
+           else (f"https://www.tiktok.com/@{usuario}" if usuario else ""))
+    if st == "PUBLISH_COMPLETE":
+        return resultado(url, ext_id, "postado")
+    if st == "FAILED":
+        return {**resultado(url, ext_id, "erro"), "erro": f"TikTok: {d.get('fail_reason') or 'falhou'}",
+                "tipo": MIDIA}
+    return resultado(url, ext_id, "processando", st)

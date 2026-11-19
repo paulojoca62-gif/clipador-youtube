@@ -112,6 +112,28 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
 .dias label{margin:0;display:flex;align-items:center;gap:5px;background:rgba(255,255,255,.05);padding:6px 10px;border-radius:9px;cursor:pointer;color:var(--txt)}
 .dias input{width:auto}
 .prev{font-size:15px;font-weight:700;background:linear-gradient(90deg,var(--ciano),var(--rosa));-webkit-background-clip:text;background-clip:text;color:transparent}
+/* 2.0 */
+.sub-abas{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.sub-abas button{background:rgba(255,255,255,.05);border:1px solid var(--borda);color:var(--sub);border-radius:999px;padding:7px 13px;font:600 13px inherit;font-family:inherit;cursor:pointer}
+.sub-abas button.ativa{color:#fff;border-color:var(--roxo);background:rgba(145,70,255,.25)}
+.saude{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:12px;padding:3px 9px;border-radius:999px}
+.s-operacional{background:rgba(62,240,160,.14);color:var(--verde)}.s-atencao,.s-pausado{background:rgba(255,210,63,.14);color:var(--amarelo)}
+.s-falha{background:rgba(255,84,112,.15);color:var(--vermelho)}.s-nao_configurado,.s-nao_validado{background:rgba(255,255,255,.07);color:var(--sub)}
+.filtros{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-bottom:14px}
+.filtros label{margin:0 0 4px}
+.notas{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.mini{font-size:12px;color:var(--sub)}
+.editor-grid{display:grid;grid-template-columns:300px 1fr;gap:16px}
+@media (max-width:760px){.editor-grid{grid-template-columns:1fr}}
+.previa{position:relative;width:270px;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:#000}
+.previa video{width:100%;height:100%;object-fit:cover}
+.zona{position:absolute;left:0;right:0;background:repeating-linear-gradient(45deg,rgba(255,84,112,.18) 0 6px,transparent 6px 12px);pointer-events:none;display:none}
+.previa.zonas .zona{display:block}
+.seg{display:grid;grid-template-columns:72px 72px 1fr auto;gap:6px;align-items:center;margin-bottom:6px}
+.seg input{padding:6px 8px;font-size:13px}
+.hist{font-size:12.5px;color:var(--sub);max-height:180px;overflow:auto;line-height:1.6}
+.aviso-faixa{border:1px solid rgba(255,210,63,.4);background:rgba(255,210,63,.08);color:var(--amarelo);padding:10px 14px;border-radius:12px;font-size:13.5px;margin-bottom:12px}
+.barra-score{display:flex;align-items:center;gap:8px}.barra-score .barra{flex:1;margin:0}
 </style>
 </head>
 <body>
@@ -119,199 +141,308 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
 <div class="grade"></div>
 
 <header>
+  <button class="btn sec peq" id="sair" onclick="encerrar()" title="Para de gravar e fecha o CortesEX-PRESS">⏻ Encerrar</button>
   <div class="logo"><span class="tesoura">✂️</span><h1>CortesEX-PRESS</h1></div>
   <p class="slogan"><span class="ponto" id="ponto"></span><span id="status-topo">carregando…</span></p>
   <nav id="abas">
-    <button data-aba="painel" class="ativa">🏠 Painel</button>
-    <button data-aba="ranking">🏆 Ranking</button>
-    <button data-aba="agendador">⏰ Agendador</button>
+    <button data-aba="dashboard" class="ativa">🏠 Dashboard</button>
+    <button data-aba="monitor">📡 Monitoramento</button>
+    <button data-aba="cortes">🏆 Cortes</button>
+    <button data-aba="editor">🎬 Editor</button>
+    <button data-aba="fila">📥 Fila</button>
+    <button data-aba="publicacoes">📜 Publicações</button>
+    <button data-aba="analytics">📈 Analytics</button>
     <button data-aba="canais">📺 Canais</button>
-    <button data-aba="contas">🔐 Contas</button>
-    <button data-aba="log">📜 Log</button>
+    <button data-aba="config">⚙️ Configurações</button>
+    <button data-aba="diagnostico">🩺 Diagnóstico</button>
   </nav>
-  <button class="btn sec peq" id="sair" onclick="encerrar()" title="Para de gravar e fecha o CortesEX-PRESS">⏻ Encerrar</button>
 </header>
 
 <main>
-<!-- PAINEL -->
-<section class="aba ativa" id="aba-painel">
+<!-- DASHBOARD -->
+<section class="aba ativa" id="aba-dashboard">
+  <div id="alertas-topo"></div>
   <div class="grid" id="resumo"></div>
-  <h2 style="margin-top:26px">Canais vigiados</h2>
-  <div class="grid" id="lista-canais-status"></div>
   <h2 style="margin-top:26px">Destinos</h2>
   <div class="grid" id="destinos"></div>
 </section>
 
-<!-- RANKING -->
-<section class="aba" id="aba-ranking">
-  <h2>🏆 Melhores cortes</h2>
-  <p class="sub">Ordenados pelo pico do chat. O agendador posta do topo para baixo, já com o título, a legenda e as hashtags do Gemini.</p>
-  <div class="linha" style="margin-bottom:14px">
-    <div><label>Período</label><select id="rk-horas"><option value="6">Últimas 6 horas</option><option value="24" selected>Últimas 24 horas</option><option value="72">Últimos 3 dias</option><option value="0">Tudo</option></select></div>
-    <div style="flex:0 0 auto"><button class="btn sec" onclick="carregarRanking()">↻ Atualizar</button></div>
-  </div>
-  <div id="lista-ranking"></div>
+<!-- MONITORAMENTO -->
+<section class="aba" id="aba-monitor">
+  <h2>📡 Canais ao vivo</h2>
+  <p class="sub">Ritmo do chat em tempo real, estado da gravação e reinícios automáticos.</p>
+  <div class="grid" id="lista-canais-status"></div>
 </section>
 
-<!-- AGENDADOR -->
-<section class="aba" id="aba-agendador">
+<!-- CORTES -->
+<section class="aba" id="aba-cortes">
+  <h2>🏆 Biblioteca de cortes</h2>
+  <div class="filtros">
+    <div><label>Mostrar</label><select id="f-estado">
+      <option value="melhores">Melhores candidatos</option><option value="aguardando_revisao">Aguardando revisão</option>
+      <option value="aprovado">Aprovados (prontos)</option><option value="publicado">Publicados</option>
+      <option value="andamento">Em processamento</option><option value="falhou">Falharam</option>
+      <option value="descartado">Descartados</option><option value="">Todos</option></select></div>
+    <div><label>Ordenar por</label><select id="f-ordenar"><option value="editorial">Nota editorial</option><option value="pico">Pico do chat</option><option value="recente">Mais recentes</option></select></div>
+    <div><label>Período</label><select id="f-horas"><option value="6">6 horas</option><option value="24" selected>24 horas</option><option value="72">3 dias</option><option value="0">Tudo</option></select></div>
+    <div><label>Canal</label><select id="f-canal"><option value="">Todos</option></select></div>
+    <div><label>Categoria</label><select id="f-categoria"><option value="">Todas</option></select></div>
+    <div style="align-self:end"><button class="btn sec" onclick="carregarCortes()">↻ Atualizar</button></div>
+  </div>
+  <div id="lista-cortes"></div>
+</section>
+
+<!-- EDITOR -->
+<section class="aba" id="aba-editor">
+  <div id="editor"><div class="card vazio"><span class="icone">🎬</span>Escolha um corte na aba <b>Cortes</b> e clique em <b>Editar</b>.</div></div>
+</section>
+
+<!-- FILA -->
+<section class="aba" id="aba-fila">
+  <h2>📥 Fila de publicação</h2>
+  <p class="sub" id="fila-modo"></p>
+  <div id="fila"></div>
+</section>
+
+<!-- PUBLICAÇÕES -->
+<section class="aba" id="aba-publicacoes">
   <div class="card">
-    <h2>⏰ Agendador de postagens</h2>
-    <label class="chave"><input type="checkbox" id="ag-ativo"><span class="trilho"></span>Postar automaticamente</label>
-    <div class="linha">
-      <div><label>Quantos vídeos</label><input type="number" id="ag-quantidade" min="1" max="60" value="1"></div>
-      <div><label>Por</label><select id="ag-periodo"><option value="hora">hora</option><option value="dia">dia</option></select></div>
-      <div><label>Pico mínimo do chat (nota)</label><input type="number" id="ag-score" step="0.1" min="0" value="2.5"></div>
-      <div><label>Só cortes das últimas (horas)</label><input type="number" id="ag-validade" min="1" value="24"></div>
-    </div>
-    <p class="prev" id="ag-resumo"></p>
-    <div class="linha">
-      <div><label>Postar a partir de (hora)</label><input type="number" id="ag-inicio" min="0" max="23" value="0"></div>
-      <div><label>Até (hora)</label><input type="number" id="ag-fim" min="1" max="24" value="24"></div>
-    </div>
-    <label>Dias da semana</label>
-    <div class="dias" id="ag-dias"></div>
-    <label>Onde postar</label>
-    <label class="chave"><input type="checkbox" id="ag-youtube"><span class="trilho"></span>▶️ YouTube Shorts</label>
-    <label class="chave"><input type="checkbox" id="ag-tiktok"><span class="trilho"></span>🎵 TikTok</label>
-    <label class="chave"><input type="checkbox" id="ag-facebook"><span class="trilho"></span>📘 Página do Facebook (Reels)</label>
-    <label class="chave"><input type="checkbox" id="ag-ia"><span class="trilho"></span>🤖 Só postar cortes que já têm os textos do Gemini</label>
-    <div class="acoes"><button class="btn" onclick="salvarAgendador()">💾 Salvar agendador</button></div>
-    <p>Os vídeos saem espalhados no período: com 5 por hora, um a cada 12 minutos. Se o YouTube, o TikTok ou o Facebook avisarem que o limite do dia acabou, aquela plataforma pausa por 1 hora e tenta de novo.</p>
-  </div>
-  <div class="card" style="margin-top:14px">
-    <h3>✂️ Detecção dos picos</h3>
-    <div class="linha">
-      <div><label>Sensibilidade (X vezes acima do normal)</label><input type="number" id="dt-mult" step="0.1" min="1.2" value="2.5"></div>
-      <div><label>Segundos antes do pico</label><input type="number" id="dt-antes" min="5" max="120" value="40"></div>
-      <div><label>Segundos depois do pico</label><input type="number" id="dt-depois" min="0" max="60" value="15"></div>
-      <div><label>Intervalo mínimo entre cortes (s)</label><input type="number" id="dt-cooldown" min="10" value="75"></div>
-    </div>
-    <div class="linha">
-      <div><label>Qualidade gravada</label><input id="gr-qualidade" value="720p60,720p,best"></div>
-      <div><label>Modelo da legenda (Whisper)</label><select id="gr-whisper"><option value="base">base (rápido)</option><option value="small">small (melhor em português)</option></select></div>
-      <div><label>Guardar cortes por (dias)</label><input type="number" id="gr-dias" min="1" value="7"></div>
-    </div>
-    <label class="chave"><input type="checkbox" id="gr-legendas"><span class="trilho"></span>Legenda escrita no vídeo</label>
-    <div class="acoes"><button class="btn" onclick="salvarDeteccao()">💾 Salvar</button></div>
-  </div>
-</section>
-
-<!-- CANAIS -->
-<section class="aba" id="aba-canais">
-  <div class="card">
-    <h2>📺 Canais da Twitch para vigiar</h2>
-    <p class="sub" style="margin-top:0">Até <b id="max-canais">5</b> canais. Corte e poste só lives de quem autorizou.</p>
-    <div id="form-canais"></div>
-    <div class="acoes">
-      <button class="btn sec" id="add-canal" onclick="addCanal()">＋ Adicionar canal</button>
-      <button class="btn" onclick="salvarCanais()">💾 Salvar canais</button>
-    </div>
-    <p><b>Layout:</b> "Fundo desfocado" põe a tela inteira no meio do vídeo vertical. "Câmera em cima" corta a webcam e coloca em cima do jogo; use se a câmera do streamer fica num canto fixo.</p>
-  </div>
-</section>
-
-<!-- CONTAS -->
-<section class="aba" id="aba-contas">
-  <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
-    <div class="card" id="c-youtube">
-      <h3>▶️ YouTube <span class="tag" id="st-youtube"></span></h3>
-      <label>ID do cliente OAuth</label><input id="yt-client_id" placeholder="xxxx.apps.googleusercontent.com">
-      <label>Chave secreta do cliente</label><input id="yt-client_secret" type="password" placeholder="deixe vazio para manter">
-      <div class="linha">
-        <div><label>Privacidade</label><select id="yt-privacidade"><option value="public">Público</option><option value="unlisted">Não listado</option><option value="private">Privado</option></select></div>
-      </div>
-      <div class="acoes">
-        <button class="btn sec peq" onclick="salvarConta('youtube')">💾 Salvar</button>
-        <button class="btn peq" onclick="conectar('youtube')">🔗 Conectar canal</button>
-        <button class="btn sec peq" onclick="testar('youtube')">🧪 Testar</button>
-        <button class="btn perigo peq" onclick="desconectar('youtube')">Desconectar</button>
-      </div>
-      <details><summary>Como configurar</summary><ol>
-        <li>No <a href="https://console.cloud.google.com" target="_blank" style="color:var(--ciano)">Google Cloud</a>, ative a <b>YouTube Data API v3</b>.</li>
-        <li>Em Credenciais, crie um <b>ID do cliente OAuth</b> do tipo <b>App para computador</b> (ou Aplicativo da Web com o URI <code class="redir"></code>).</li>
-        <li>Na tela de consentimento, adicione o seu e-mail em <b>Usuários de teste</b>.</li>
-        <li>Cole o ID e a chave aqui, salve e clique em <b>Conectar canal</b>.</li>
-        <li>Sem a auditoria da API do Google, o YouTube pode travar os vídeos como privados.</li>
-      </ol></details>
-    </div>
-
-    <div class="card" id="c-tiktok">
-      <h3>🎵 TikTok <span class="tag" id="st-tiktok"></span></h3>
-      <label>Client key</label><input id="tt-client_key">
-      <label>Client secret</label><input id="tt-client_secret" type="password" placeholder="deixe vazio para manter">
-      <label>URL de retorno cadastrada no app (Redirect URI)</label><input id="tt-redirect_uri" placeholder="padrão: endereço deste painel">
-      <div class="acoes">
-        <button class="btn sec peq" onclick="salvarConta('tiktok')">💾 Salvar</button>
-        <button class="btn peq" onclick="conectar('tiktok')">🔗 Conectar conta</button>
-        <button class="btn sec peq" onclick="testar('tiktok')">🧪 Testar</button>
-        <button class="btn perigo peq" onclick="desconectar('tiktok')">Desconectar</button>
-      </div>
-      <label>Se o TikTok te mandar para outro endereço, cole o endereço inteiro aqui</label>
-      <div class="linha"><input id="tt-retorno" placeholder="https://...?code=..."><button class="btn sec peq" style="flex:0 0 auto" onclick="colarCodigo('tiktok')">Concluir</button></div>
-      <details><summary>Como configurar</summary><ol>
-        <li>Crie um app em <a href="https://developers.tiktok.com" target="_blank" style="color:var(--ciano)">developers.tiktok.com</a>, plataforma <b>Desktop</b>, com <b>Login Kit</b> e <b>Content Posting API</b> (Direct Post ligado).</li>
-        <li>Em Login Kit, cadastre a Redirect URI <code class="redir"></code> (deixe o campo acima vazio).</li>
-        <li>Sem a auditoria do TikTok, os vídeos saem <b>privados</b> e a conta precisa estar <b>privada</b>.</li>
-      </ol></details>
-    </div>
-
-    <div class="card" id="c-facebook">
-      <h3>📘 Página do Facebook <span class="tag" id="st-facebook"></span></h3>
-      <label>App ID</label><input id="fb-app_id">
-      <label>App secret</label><input id="fb-app_secret" type="password" placeholder="deixe vazio para manter">
-      <label>Token de usuário (do Explorador da Graph API)</label><input id="fb-token" type="password" placeholder="EAAG...">
-      <div class="acoes">
-        <button class="btn sec peq" onclick="salvarConta('facebook')">💾 Salvar</button>
-        <button class="btn peq" onclick="buscarPaginas()">📄 Buscar minhas Páginas</button>
-        <button class="btn sec peq" onclick="testar('facebook')">🧪 Testar</button>
-        <button class="btn perigo peq" onclick="desconectar('facebook')">Desconectar</button>
-      </div>
-      <div id="fb-paginas"></div>
-      <details><summary>Como configurar</summary><ol>
-        <li>Crie um app do tipo <b>Empresa</b> em <a href="https://developers.facebook.com" target="_blank" style="color:var(--ciano)">developers.facebook.com</a>.</li>
-        <li>No <b>Explorador da Graph API</b>, gere um token de usuário com <code>pages_show_list</code>, <code>pages_read_engagement</code> e <code>pages_manage_posts</code>.</li>
-        <li>Cole aqui com o App ID e o App secret e clique em <b>Buscar minhas Páginas</b>. O token da Página escolhida não vence.</li>
-      </ol></details>
-    </div>
-
-    <div class="card" id="c-gemini">
-      <h3>🤖 Gemini (títulos e legendas) <span class="tag" id="st-gemini"></span></h3>
-      <label>Chave da API do Gemini</label><input id="gm-api_key" type="password" placeholder="AIza… (deixe vazio para manter)">
-      <label>Modelo</label><select id="gm-modelo"><option value="gemini-flash-latest">Gemini Flash (recomendado)</option><option value="gemini-flash-lite-latest">Gemini Flash Lite (mais rápido)</option><option value="gemini-2.5-flash">Gemini 2.5 Flash</option></select>
-      <div class="acoes">
-        <button class="btn sec peq" onclick="salvarConta('gemini')">💾 Salvar</button>
-        <button class="btn sec peq" onclick="testar('gemini')">🧪 Testar</button>
-        <button class="btn perigo peq" onclick="desconectar('gemini')">Remover</button>
-      </div>
-      <p>Chave grátis em <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--ciano)">aistudio.google.com/apikey</a>.</p>
-    </div>
-
-    <div class="card" id="c-telegram">
-      <h3>✈️ Avisos no Telegram <span class="tag" id="st-telegram"></span></h3>
-      <label>Token do bot (do @BotFather)</label><input id="tg-bot_token" type="password" placeholder="123456:ABC… (deixe vazio para manter)">
-      <label>Chat ID</label><input id="tg-chat_id" placeholder="clique em Descobrir depois de mandar um oi ao bot">
-      <label class="chave"><input type="checkbox" id="tg-avisar_postagem"><span class="trilho"></span>Avisar cada vídeo postado</label>
-      <label class="chave"><input type="checkbox" id="tg-avisar_erro"><span class="trilho"></span>Avisar erros</label>
-      <div class="acoes">
-        <button class="btn sec peq" onclick="salvarConta('telegram')">💾 Salvar</button>
-        <button class="btn sec peq" onclick="descobrirChat()">🔎 Descobrir chat</button>
-        <button class="btn sec peq" onclick="testar('telegram')">🧪 Testar</button>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- LOG -->
-<section class="aba" id="aba-log">
-  <div class="card">
-    <h2>📜 Clipes postados</h2>
-    <div class="rolagem"><table class="tabela"><thead><tr><th>Quando</th><th>Onde</th><th>Corte</th><th>Nota</th><th>Situação</th></tr></thead><tbody id="log-post"></tbody></table></div>
+    <h2>📜 Publicações</h2>
+    <div class="rolagem"><table class="tabela"><thead><tr><th>Quando</th><th>Onde</th><th>Corte</th><th>Notas</th><th>Situação</th></tr></thead><tbody id="log-post"></tbody></table></div>
   </div>
   <div class="card" style="margin-top:14px">
     <h3>🛠️ Atividade do sistema</h3>
     <div class="eventos" id="eventos"></div>
   </div>
+</section>
+
+<!-- ANALYTICS -->
+<section class="aba" id="aba-analytics">
+  <h2>📈 Analytics</h2>
+  <div id="analytics"></div>
+</section>
+
+<!-- CANAIS -->
+<section class="aba" id="aba-canais">
+  <div class="card">
+    <h2>📺 Canais da Twitch</h2>
+    <p class="sub" style="margin-top:0">Até <b id="max-canais">5</b> canais. Registre aqui a autorização de cada criador: <b>sem autorização registrada, nada é publicado automaticamente</b>.</p>
+    <div class="aviso-faixa">O registro da autorização é seu controle interno. Ele não substitui a análise de direitos autorais nem as regras de cada plataforma.</div>
+    <div id="form-canais"></div>
+    <div class="acoes">
+      <button class="btn sec" id="add-canal" onclick="addCanal()">＋ Adicionar canal</button>
+      <button class="btn" onclick="salvarCanais()">💾 Salvar canais</button>
+    </div>
+  </div>
+</section>
+
+<!-- CONFIGURAÇÕES -->
+<section class="aba" id="aba-config">
+  <div class="sub-abas" id="sub-config">
+    <button data-sub="cfg-agendador" class="ativa">⏰ Agendador</button>
+    <button data-sub="cfg-deteccao">✂️ Detecção e corte</button>
+    <button data-sub="cfg-legendas">💬 Legendas</button>
+    <button data-sub="cfg-contas">🔐 Redes e IA</button>
+    <button data-sub="cfg-sistema">🧰 Sistema</button>
+  </div>
+
+  <div class="painel-sub" id="cfg-agendador">
+    <div class="card">
+      <h2>⏰ Modo e agendador</h2>
+      <label>Modo de funcionamento</label>
+      <select id="ag-modo">
+        <option value="manual">Manual — tudo é processado; você revisa e publica</option>
+        <option value="semiautomatico">Semiautomático (recomendado) — você aprova; o agendador publica os aprovados</option>
+        <option value="automatico">Automático — publica sozinho o que passar nos filtros</option>
+      </select>
+      <label class="chave"><input type="checkbox" id="ag-ativo"><span class="trilho"></span>Agendador ligado</label>
+      <div class="linha">
+        <div><label>Quantos vídeos</label><input type="number" id="ag-quantidade" min="1" max="60" value="1"></div>
+        <div><label>Por</label><select id="ag-periodo"><option value="hora">hora</option><option value="dia">dia</option></select></div>
+        <div><label>Escolher primeiro</label><select id="ag-ordenar"><option value="editorial">maior nota editorial</option><option value="pico">maior pico do chat</option><option value="recente">mais recente</option></select></div>
+      </div>
+      <p class="prev" id="ag-resumo"></p>
+      <div class="linha">
+        <div><label>Pico mínimo do chat (x)</label><input type="number" id="ag-score" step="0.1" min="0" value="2.5"></div>
+        <div><label>Nota editorial mínima (0–100, 0 = não filtra)</label><input type="number" id="ag-editorial" min="0" max="100" value="0"></div>
+        <div><label>Só cortes das últimas (horas)</label><input type="number" id="ag-validade" min="1" value="24"></div>
+      </div>
+      <div class="linha">
+        <div><label>Postar a partir de (hora)</label><input type="number" id="ag-inicio" min="0" max="23" value="0"></div>
+        <div><label>Até (hora)</label><input type="number" id="ag-fim" min="1" max="24" value="24"></div>
+      </div>
+      <label>Dias da semana</label><div class="dias" id="ag-dias"></div>
+      <label>Onde postar</label>
+      <label class="chave"><input type="checkbox" id="ag-youtube"><span class="trilho"></span>▶️ YouTube Shorts</label>
+      <label class="chave"><input type="checkbox" id="ag-tiktok"><span class="trilho"></span>🎵 TikTok</label>
+      <label class="chave"><input type="checkbox" id="ag-facebook"><span class="trilho"></span>📘 Página do Facebook (Reels)</label>
+      <label class="chave"><input type="checkbox" id="ag-ia"><span class="trilho"></span>🤖 Só postar cortes com textos do Gemini</label>
+      <label class="chave"><input type="checkbox" id="ag-canal"><span class="trilho"></span>🔀 Evitar o mesmo canal duas vezes seguidas</label>
+      <div class="acoes"><button class="btn" onclick="salvarAgendador()">💾 Salvar agendador</button></div>
+      <p>Em todos os modos, o agendador só publica canais com autorização registrada para aquela rede, vídeos validados e nunca o mesmo corte duas vezes na mesma rede.</p>
+    </div>
+  </div>
+
+  <div class="painel-sub" id="cfg-deteccao" hidden>
+    <div class="card">
+      <h3>✂️ Detecção dos picos</h3>
+      <div class="linha">
+        <div><label>Sensibilidade (x acima do normal)</label><input type="number" id="dt-mult" step="0.1" min="1.2" value="2.5"></div>
+        <div><label>Intervalo mínimo entre cortes (s)</label><input type="number" id="dt-cooldown" min="10" value="75"></div>
+        <div><label>Agrupar picos a menos de (s)</label><input type="number" id="dt-agrupar" min="0" max="120" value="30"></div>
+      </div>
+      <h3 style="margin-top:18px">🎯 Corte adaptativo</h3>
+      <label class="chave"><input type="checkbox" id="ct-adaptativo"><span class="trilho"></span>Começar e terminar nas pausas da fala (recomendado)</label>
+      <div class="linha">
+        <div><label>Duração mínima (s)</label><input type="number" id="ct-min" min="5" max="120" value="20"></div>
+        <div><label>Duração máxima (s)</label><input type="number" id="ct-max" min="10" max="180" value="90"></div>
+        <div><label>Contexto antes do pico, máx. (s)</label><input type="number" id="ct-antes" min="10" max="120" value="60"></div>
+        <div><label>Depois do pico, máx. (s)</label><input type="number" id="ct-depois" min="5" max="60" value="30"></div>
+      </div>
+      <div class="linha">
+        <div><label>Sem corte adaptativo: segundos antes</label><input type="number" id="dt-antes" min="5" max="120" value="40"></div>
+        <div><label>Segundos depois</label><input type="number" id="dt-depois" min="0" max="60" value="15"></div>
+      </div>
+      <h3 style="margin-top:18px">🎥 Gravação</h3>
+      <div class="linha">
+        <div><label>Qualidade gravada</label><input id="gr-qualidade" value="720p60,720p,best"></div>
+        <div><label>Modelo da transcrição (Whisper)</label><select id="gr-whisper"><option value="base">base (rápido)</option><option value="small">small (melhor em português)</option></select></div>
+      </div>
+      <label class="chave"><input type="checkbox" id="gr-legendas"><span class="trilho"></span>Legenda escrita no vídeo</label>
+      <div class="acoes"><button class="btn" onclick="salvarDeteccao()">💾 Salvar</button></div>
+    </div>
+  </div>
+
+  <div class="painel-sub" id="cfg-legendas" hidden>
+    <div class="card">
+      <h3>💬 Estilo das legendas</h3>
+      <div class="linha">
+        <div><label>Estilo</label><select id="lg-estilo"><option value="classico">Clássico</option><option value="impacto">Impacto (palavra destacada)</option><option value="narrativo">Narrativo (frases)</option></select></div>
+        <div><label>Posição</label><select id="lg-posicao"><option value="baixo">Embaixo (acima dos botões)</option><option value="meio">Meio</option><option value="alto">Em cima</option></select></div>
+        <div><label>Fonte</label><input id="lg-fonte" value="DejaVu Sans"></div>
+      </div>
+      <div class="linha">
+        <div><label>Tamanho</label><input type="number" id="lg-tamanho" min="30" max="140" value="74"></div>
+        <div><label>Cor</label><input type="color" id="lg-cor" value="#ffffff"></div>
+        <div><label>Cor de destaque</label><input type="color" id="lg-destaque" value="#ffd23f"></div>
+        <div><label>Contorno</label><input type="number" id="lg-contorno" min="0" max="12" value="6"></div>
+      </div>
+      <div class="linha">
+        <div><label>Margem de baixo (px, mín. 420)</label><input type="number" id="lg-margem" min="420" max="1200" value="420"></div>
+        <div><label>Margem lateral (px)</label><input type="number" id="lg-lateral" min="60" max="300" value="90"></div>
+        <div><label>Letras por linha</label><input type="number" id="lg-chars" min="8" max="40" value="22"></div>
+      </div>
+      <label class="chave"><input type="checkbox" id="lg-animacao"><span class="trilho"></span>Animações leves</label>
+      <p class="mini">A área segura impede que a legenda fique embaixo dos botões e da descrição das redes (faixas vermelhas na prévia do Editor). Mudanças valem para os próximos cortes; para um corte já feito, use o Editor.</p>
+      <div class="acoes"><button class="btn" onclick="salvarLegendas()">💾 Salvar</button></div>
+    </div>
+  </div>
+
+  <div class="painel-sub" id="cfg-contas" hidden>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+      <div class="card" id="c-youtube">
+        <h3>▶️ YouTube <span class="tag" id="st-youtube"></span></h3>
+        <label>ID do cliente OAuth</label><input id="yt-client_id" placeholder="xxxx.apps.googleusercontent.com">
+        <label>Chave secreta do cliente</label><input id="yt-client_secret" type="password" placeholder="deixe vazio para manter">
+        <label>Privacidade</label><select id="yt-privacidade"><option value="public">Público</option><option value="unlisted">Não listado</option><option value="private">Privado</option></select>
+        <div class="acoes">
+          <button class="btn sec peq" onclick="salvarConta('youtube')">💾 Salvar</button>
+          <button class="btn peq" onclick="conectar('youtube')">🔗 Conectar canal</button>
+          <button class="btn sec peq" onclick="testar('youtube')">🧪 Testar</button>
+          <button class="btn perigo peq" onclick="desconectar('youtube')">Desconectar</button>
+        </div>
+        <details><summary>Como configurar</summary><ol>
+          <li>No Google Cloud, ative a <b>YouTube Data API v3</b>.</li>
+          <li>Crie um <b>ID do cliente OAuth</b> do tipo <b>App para computador</b> (ou Aplicativo da Web com o URI <code class="redir"></code>).</li>
+          <li>Na tela de consentimento, adicione o seu e-mail em <b>Usuários de teste</b>.</li>
+          <li>Sem a auditoria da API do Google, o YouTube pode travar os vídeos como privados.</li>
+        </ol></details>
+      </div>
+      <div class="card" id="c-tiktok">
+        <h3>🎵 TikTok <span class="tag" id="st-tiktok"></span></h3>
+        <label>Client key</label><input id="tt-client_key">
+        <label>Client secret</label><input id="tt-client_secret" type="password" placeholder="deixe vazio para manter">
+        <label>Redirect URI (vazio = endereço deste painel)</label><input id="tt-redirect_uri">
+        <div class="acoes">
+          <button class="btn sec peq" onclick="salvarConta('tiktok')">💾 Salvar</button>
+          <button class="btn peq" onclick="conectar('tiktok')">🔗 Conectar conta</button>
+          <button class="btn sec peq" onclick="testar('tiktok')">🧪 Testar</button>
+          <button class="btn perigo peq" onclick="desconectar('tiktok')">Desconectar</button>
+        </div>
+        <label>Se o TikTok te mandar para outro endereço, cole o endereço inteiro aqui</label>
+        <div class="linha"><input id="tt-retorno" placeholder="https://...?code=..."><button class="btn sec peq" style="flex:0 0 auto" onclick="colarCodigo('tiktok')">Concluir</button></div>
+        <details><summary>Como configurar</summary><ol>
+          <li>App em developers.tiktok.com, plataforma <b>Desktop</b>, com <b>Login Kit</b> e <b>Content Posting API</b> (Direct Post).</li>
+          <li>Redirect URI: <code class="redir"></code>.</li>
+          <li>Sem a auditoria do TikTok, os posts saem privados e a conta precisa estar privada.</li>
+        </ol></details>
+      </div>
+      <div class="card" id="c-facebook">
+        <h3>📘 Página do Facebook <span class="tag" id="st-facebook"></span></h3>
+        <label>App ID</label><input id="fb-app_id">
+        <label>App secret</label><input id="fb-app_secret" type="password" placeholder="deixe vazio para manter">
+        <label>Token de usuário (Explorador da Graph API)</label><input id="fb-token" type="password" placeholder="EAAG...">
+        <div class="acoes">
+          <button class="btn sec peq" onclick="salvarConta('facebook')">💾 Salvar</button>
+          <button class="btn peq" onclick="buscarPaginas()">📄 Buscar minhas Páginas</button>
+          <button class="btn sec peq" onclick="testar('facebook')">🧪 Testar</button>
+          <button class="btn perigo peq" onclick="desconectar('facebook')">Desconectar</button>
+        </div>
+        <div id="fb-paginas"></div>
+      </div>
+      <div class="card" id="c-gemini">
+        <h3>🤖 Gemini <span class="tag" id="st-gemini"></span></h3>
+        <label>Chave da API do Gemini</label><input id="gm-api_key" type="password" placeholder="AIza… (deixe vazio para manter)">
+        <label>Modelo</label><select id="gm-modelo"><option value="gemini-flash-latest">Gemini Flash (recomendado)</option><option value="gemini-flash-lite-latest">Gemini Flash Lite</option><option value="gemini-2.5-flash">Gemini 2.5 Flash</option></select>
+        <div class="acoes">
+          <button class="btn sec peq" onclick="salvarConta('gemini')">💾 Salvar</button>
+          <button class="btn sec peq" onclick="testar('gemini')">🧪 Testar</button>
+          <button class="btn perigo peq" onclick="desconectar('gemini')">Remover</button>
+        </div>
+      </div>
+      <div class="card" id="c-telegram">
+        <h3>✈️ Telegram <span class="tag" id="st-telegram"></span></h3>
+        <label>Token do bot (@BotFather)</label><input id="tg-bot_token" type="password" placeholder="deixe vazio para manter">
+        <label>Chat ID</label><input id="tg-chat_id">
+        <label class="chave"><input type="checkbox" id="tg-avisar_postagem"><span class="trilho"></span>Avisar cada vídeo postado</label>
+        <label class="chave"><input type="checkbox" id="tg-avisar_erro"><span class="trilho"></span>Avisar erros e alertas do sistema</label>
+        <div class="acoes">
+          <button class="btn sec peq" onclick="salvarConta('telegram')">💾 Salvar</button>
+          <button class="btn sec peq" onclick="descobrirChat()">🔎 Descobrir chat</button>
+          <button class="btn sec peq" onclick="testar('telegram')">🧪 Testar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="painel-sub" id="cfg-sistema" hidden>
+    <div class="card">
+      <h3>🧰 Processamento e armazenamento</h3>
+      <div class="linha">
+        <div><label>Cortes montados ao mesmo tempo</label><input type="number" id="pr-workers" min="1" max="4" value="1"></div>
+        <div><label>Tentativas por etapa</label><input type="number" id="pr-tentativas" min="1" max="10" value="3"></div>
+      </div>
+      <div class="linha">
+        <div><label>Guardar cortes por (dias)</label><input type="number" id="gr-dias" min="1" value="7"></div>
+        <div><label>Guardar fontes (editor) por (dias)</label><input type="number" id="ar-fontes" min="0" value="3"></div>
+        <div><label>Pausar gravação abaixo de (GB livres)</label><input type="number" id="ar-livre" min="1" value="5"></div>
+      </div>
+      <label class="chave"><input type="checkbox" id="ar-publicados"><span class="trilho"></span>Manter vídeos já publicados (não apagar na limpeza)</label>
+      <p class="mini">Cortes aprovados e envios em andamento nunca são apagados pela limpeza. Mudar "cortes ao mesmo tempo" vale ao reabrir o programa.</p>
+      <h3 style="margin-top:18px">⚖️ Pesos da nota editorial (versão <span id="ps-versao">1</span>)</h3>
+      <div class="linha" id="ps-pesos"></div>
+      <p class="mini">Critérios sem dado (ex.: sem Gemini) ficam de fora da conta e baixam a "confiança" da nota.</p>
+      <label class="chave"><input type="checkbox" id="an-ativo"><span class="trilho"></span>Coletar métricas do YouTube (visualizações, curtidas, comentários)</label>
+      <div class="acoes"><button class="btn" onclick="salvarSistema()">💾 Salvar</button></div>
+      <p class="mini" id="cofre-info"></p>
+    </div>
+  </div>
+</section>
+
+<!-- DIAGNÓSTICO -->
+<section class="aba" id="aba-diagnostico">
+  <h2>🩺 Diagnóstico</h2>
+  <div id="diagnostico"></div>
 </section>
 </main>
 <div id="toast"></div>
@@ -321,7 +452,10 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const NOMES = {youtube:"▶️ YouTube", tiktok:"🎵 TikTok", facebook:"📘 Facebook"};
 const DIAS = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
-let CFG = {}, EST = {};
+const ESTADOS = {detectado:"detectado",capturando:"capturando",capturado:"capturado",transcrevendo:"transcrevendo",transcrito:"transcrito",montando:"montando",montado:"montado",gerando_textos:"gerando textos",aguardando_revisao:"aguardando revisão",aprovado:"aprovado",falhou:"falhou",descartado:"descartado"};
+const SAUDE = {operacional:"operacional",atencao:"atenção",falha:"falha",nao_configurado:"não configurado",nao_validado:"não validado",pausado:"pausado"};
+const PESOS = {chat:"Intensidade do chat",reacao:"Reação",contexto:"Contexto",entretenimento:"Entretenimento",audio:"Áudio",inicio_fim:"Início e fim",retencao:"Potencial (estimado pela IA)"};
+let CFG = {}, EST = {}, EDIT = null;
 
 async function api(caminho, corpo){
   const op = corpo === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json","X-CortesEX":"1"}, body:JSON.stringify(corpo)};
@@ -330,10 +464,7 @@ async function api(caminho, corpo){
   if(!r.ok) throw new Error(j.erro || ("Erro " + r.status));
   return j;
 }
-function toast(msg, tipo="ok"){
-  const t = $("#toast"); t.textContent = msg; t.className = "on " + tipo;
-  clearTimeout(t._h); t._h = setTimeout(() => t.className = tipo, 4200);
-}
+function toast(msg, tipo="ok"){ const t = $("#toast"); t.textContent = msg; t.className = "on " + tipo; clearTimeout(t._h); t._h = setTimeout(() => t.className = tipo, 4500); }
 async function acao(fn, btn){
   if(btn) btn.disabled = true;
   try{ const r = await fn(); if(r && r.msg) toast(r.msg); return r; }
@@ -341,19 +472,25 @@ async function acao(fn, btn){
   finally{ if(btn) btn.disabled = false; }
 }
 const quando = t => t ? new Date(t*1000).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "—";
+const saude = s => `<span class="saude s-${esc(s)}">● ${esc(SAUDE[s] || s)}</span>`;
+const nota = v => v === null || v === undefined ? "—" : Math.round(v);
 
 /* abas */
 function abrir(nome){
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("ativa", b.dataset.aba === nome));
   document.querySelectorAll(".aba").forEach(a => a.classList.toggle("ativa", a.id === "aba-" + nome));
-  if(nome === "ranking") carregarRanking();
-  if(nome === "log") carregarLog();
+  ({cortes:carregarCortes, fila:carregarFila, publicacoes:carregarLog, analytics:carregarAnalytics, diagnostico:carregarDiag, monitor:carregarEstado})[nome]?.();
 }
-$("#abas").addEventListener("click", e => { const b = e.target.closest("button"); if(b){ location.hash = b.dataset.aba; } });
+$("#abas").addEventListener("click", e => { const b = e.target.closest("button"); if(b) location.hash = b.dataset.aba; });
+$("#sub-config").addEventListener("click", e => { const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#sub-config button").forEach(x => x.classList.toggle("ativa", x === b));
+  document.querySelectorAll("#aba-config > .painel-sub").forEach(s => s.hidden = s.id !== b.dataset.sub); });
 window.addEventListener("hashchange", lerHash);
 function lerHash(){
-  const [nome, qs] = location.hash.slice(1).split("?");
-  abrir(nome || "painel");
+  let [nome, qs] = location.hash.slice(1).split("?");
+  if(nome === "contas"){ nome = "config"; document.querySelector('[data-sub="cfg-contas"]').click(); }
+  if(nome === "painel") nome = "dashboard";
+  abrir(nome || "dashboard");
   if(qs){ const p = new URLSearchParams(qs); if(p.get("ok")) toast(p.get("ok")); if(p.get("erro")) toast(p.get("erro"), "erro");
     history.replaceState(null, "", "#" + nome); carregarConfig(); }
 }
@@ -363,186 +500,376 @@ async function carregarEstado(){
   try{ EST = await api("/api/estado"); }catch(e){ $("#status-topo").textContent = "painel desconectado"; $("#ponto").className = "ponto off"; return; }
   const aoVivo = EST.canais.filter(c => c.ao_vivo).length;
   $("#ponto").className = "ponto" + (aoVivo ? "" : " off");
-  $("#status-topo").textContent = `${EST.canais.length} canal(is) vigiado(s) · ${aoVivo} ao vivo · agendador ${EST.agendador ? "ligado" : "desligado"}`;
+  const modo = {manual:"manual", semiautomatico:"semiautomático", automatico:"automático"}[EST.modo] || EST.modo;
+  $("#status-topo").textContent = `${EST.canais.length} canal(is) · ${aoVivo} ao vivo · modo ${modo} · agendador ${EST.agendador ? "ligado" : "desligado"}`;
   $("#max-canais").textContent = EST.max_canais;
   document.querySelectorAll(".redir").forEach(e => e.textContent = EST.redirect);
-  const ligadas = Object.entries(EST.plataformas).filter(([,p]) => p.ligado && p.conectado).length;
+  const e = EST.estados || {};
+  const alertas = [];
+  if(EST.disco_baixo) alertas.push("Pouco espaço em disco: a gravação está pausada.");
+  if(EST.incertos) alertas.push(`${EST.incertos} envio(s) interrompido(s): confira na aba Fila se foram publicados.`);
+  Object.entries(EST.plataformas).forEach(([k,p]) => { if(p.pausa) alertas.push(`${NOMES[k]} pausado: ${p.pausa}`); });
+  $("#alertas-topo").innerHTML = alertas.map(a => `<div class="aviso-faixa">⚠️ ${esc(a)}</div>`).join("");
   $("#resumo").innerHTML = `
-    <div class="card"><h3>📺 Ao vivo agora</h3><div class="num">${aoVivo}<span style="font-size:18px;color:var(--sub)"> / ${EST.canais.length}</span></div><p>canais gravando</p></div>
-    <div class="card"><h3>⏰ Agendador</h3><div class="num">${EST.agendador ? "ON" : "OFF"}</div><p>${ligadas} destino(s) prontos</p></div>
-    <div class="card"><h3>🎬 Na fila</h3><div class="num">${EST.fila_render}</div><p>cortes sendo gerados</p></div>
-    <div class="card"><h3>🤖 Gemini</h3><div class="num">${EST.gemini ? "✓" : "—"}</div><p>${EST.gemini ? "escrevendo títulos e legendas" : "coloque a chave em Contas"}</p></div>`;
+    <div class="card"><h3>📺 Ao vivo</h3><div class="num">${aoVivo}<span style="font-size:18px;color:var(--sub)"> / ${EST.canais.length}</span></div><p>canais gravando</p></div>
+    <div class="card"><h3>⚙️ Processando</h3><div class="num">${EST.fila_render}</div><p>cortes no pipeline</p></div>
+    <div class="card"><h3>👀 Para revisar</h3><div class="num">${e.aguardando_revisao || 0}</div><p>aguardando sua revisão</p></div>
+    <div class="card"><h3>✅ Aprovados</h3><div class="num">${e.aprovado || 0}</div><p>prontos para o agendador</p></div>
+    <div class="card"><h3>❌ Falharam</h3><div class="num">${e.falhou || 0}</div><p>podem ser reprocessados</p></div>
+    <div class="card"><h3>🤖 Gemini</h3><div class="num">${EST.gemini ? "✓" : "—"}</div><p>${EST.gemini ? "títulos, legendas e análise" : "coloque a chave em Configurações"}</p></div>`;
   $("#lista-canais-status").innerHTML = EST.canais.length ? EST.canais.map(c => `
     <div class="card"><h3>${c.ao_vivo ? '<span class="tag live">● AO VIVO</span>' : '<span class="tag">offline</span>'} ${esc(c.nome)}</h3>
-      <p>Chat: <b>${c.taxa}</b> msg/s · normal ${c.normal}</p>
+      <p>Chat: <b>${c.taxa}</b> msg/s · normal ${c.normal} · ${c.chat ? "chat conectado" : "chat desconectado"}</p>
       <div class="barra"><i style="width:${Math.min(100, c.normal ? c.taxa / c.normal / 3 * 100 : 0)}%"></i></div>
+      <p class="mini">Gravação: ${c.gravando ? "ativa" : "parada"} · reinícios automáticos: ${c.reinicios}${c.ultimo_erro && !c.ao_vivo ? " · " + esc(c.ultimo_erro.slice(0,80)) : ""}</p>
       <button class="btn peq" ${c.ao_vivo ? "" : "disabled"} onclick="acao(() => api('/api/clipar',{canal:'${esc(c.nome)}'}).then(() => ({msg:'Corte agendado!'})), this)">✂️ Clipar agora</button></div>`).join("")
     : `<div class="card vazio"><span class="icone">📺</span>Nenhum canal ainda. Adicione na aba <b>Canais</b>.</div>`;
   $("#destinos").innerHTML = Object.entries(EST.plataformas).map(([k,p]) => `
     <div class="card"><h3>${NOMES[k]}</h3>
       <span class="tag ${p.conectado ? "ok" : "erro"}">${p.conectado ? "conectado" : "não conectado"}</span>
       <span class="tag ${p.ligado ? "ok" : ""}">${p.ligado ? "no agendador" : "fora do agendador"}</span>
-      ${p.pausa ? `<p style="color:var(--amarelo)">⏸ ${esc(p.pausa)}</p>` : ""}
+      ${p.pausa ? `<p style="color:var(--amarelo)">⏸ ${esc(p.pausa)}<br><span class="mini">${p.pausa_ate - Date.now()/1000 > 86400*300 ? "até você retomar" : "até " + quando(p.pausa_ate)}</span></p><button class="btn sec peq" onclick="retomar('${k}')">▶ Retomar</button>` : ""}
       <p>Último envio: ${quando(p.ultima)}</p></div>`).join("");
-  for(const k of ["youtube","tiktok","facebook"]){ const p = EST.plataformas[k]; const t = $("#st-" + k);
-    t.textContent = p.conectado ? "conectado" : "não conectado"; t.className = "tag " + (p.conectado ? "ok" : "erro"); }
+  for(const k of ["youtube","tiktok","facebook"]){ const p = EST.plataformas[k]; const t = $("#st-" + k); if(t){ t.textContent = p.conectado ? "conectado" : "não conectado"; t.className = "tag " + (p.conectado ? "ok" : "erro"); } }
 }
+async function retomar(p){ await acao(() => api("/api/retomar/" + p, {})); carregarEstado(); }
 
 /* configuração */
+const val = (id, v) => { const e = $("#" + id); if(!e) return; if(e.type === "checkbox") e.checked = !!v; else e.value = v ?? ""; };
 async function carregarConfig(){
   CFG = await api("/api/config");
-  const ag = CFG.agendador, dt = CFG.deteccao, gr = CFG.gravacao;
-  $("#ag-ativo").checked = ag.ativo; $("#ag-quantidade").value = ag.quantidade; $("#ag-periodo").value = ag.periodo;
-  $("#ag-score").value = ag.score_minimo; $("#ag-validade").value = ag.horas_validade;
-  $("#ag-inicio").value = ag.hora_inicio; $("#ag-fim").value = ag.hora_fim;
-  $("#ag-youtube").checked = ag.plataformas.youtube; $("#ag-tiktok").checked = ag.plataformas.tiktok; $("#ag-facebook").checked = ag.plataformas.facebook;
-  $("#ag-ia").checked = ag.exigir_textos_ia;
+  const ag = CFG.agendador, dt = CFG.deteccao, gr = CFG.gravacao, ct = CFG.corte, lg = CFG.legendas;
+  val("ag-modo", ag.modo); val("ag-ativo", ag.ativo); val("ag-quantidade", ag.quantidade); val("ag-periodo", ag.periodo); val("ag-ordenar", ag.ordenar_por);
+  val("ag-score", ag.score_minimo); val("ag-editorial", ag.score_editorial_minimo); val("ag-validade", ag.horas_validade);
+  val("ag-inicio", ag.hora_inicio); val("ag-fim", ag.hora_fim); val("ag-youtube", ag.plataformas.youtube); val("ag-tiktok", ag.plataformas.tiktok);
+  val("ag-facebook", ag.plataformas.facebook); val("ag-ia", ag.exigir_textos_ia); val("ag-canal", ag.evitar_mesmo_canal_seguido);
   $("#ag-dias").innerHTML = DIAS.map((d,i) => `<label><input type="checkbox" value="${i}" ${ag.dias.includes(i) ? "checked" : ""}>${d}</label>`).join("");
   resumoAgendador();
-  $("#dt-mult").value = dt.multiplicador; $("#dt-antes").value = dt.antes_segundos; $("#dt-depois").value = dt.depois_segundos; $("#dt-cooldown").value = dt.cooldown_segundos;
-  $("#gr-qualidade").value = gr.qualidade; $("#gr-whisper").value = gr.modelo_whisper; $("#gr-dias").value = gr.dias_guardar_cortes; $("#gr-legendas").checked = gr.legendas;
-  $("#yt-client_id").value = CFG.youtube.client_id; $("#yt-privacidade").value = CFG.youtube.privacidade;
-  $("#tt-client_key").value = CFG.tiktok.client_key; $("#tt-redirect_uri").value = CFG.tiktok.redirect_uri;
-  $("#fb-app_id").value = CFG.facebook.app_id;
-  $("#gm-modelo").value = CFG.gemini.modelo;
-  $("#tg-chat_id").value = CFG.telegram.chat_id; $("#tg-avisar_postagem").checked = CFG.telegram.avisar_postagem; $("#tg-avisar_erro").checked = CFG.telegram.avisar_erro;
+  val("dt-mult", dt.multiplicador); val("dt-cooldown", dt.cooldown_segundos); val("dt-agrupar", dt.agrupar_segundos); val("dt-antes", dt.antes_segundos); val("dt-depois", dt.depois_segundos);
+  val("ct-adaptativo", ct.adaptativo); val("ct-min", ct.duracao_min); val("ct-max", ct.duracao_max); val("ct-antes", ct.contexto_antes_max); val("ct-depois", ct.contexto_depois_max);
+  val("gr-qualidade", gr.qualidade); val("gr-whisper", gr.modelo_whisper); val("gr-dias", gr.dias_guardar_cortes); val("gr-legendas", gr.legendas);
+  val("lg-estilo", lg.estilo); val("lg-posicao", lg.posicao); val("lg-fonte", lg.fonte); val("lg-tamanho", lg.tamanho); val("lg-cor", lg.cor); val("lg-destaque", lg.cor_destaque);
+  val("lg-contorno", lg.contorno); val("lg-margem", lg.margem_inferior); val("lg-lateral", lg.margem_lateral); val("lg-chars", lg.max_caracteres); val("lg-animacao", lg.animacao);
+  val("pr-workers", CFG.processamento.workers_montagem); val("pr-tentativas", CFG.processamento.tentativas_etapa);
+  val("ar-fontes", CFG.armazenamento.dias_guardar_fontes); val("ar-livre", CFG.armazenamento.minimo_livre_gb); val("ar-publicados", CFG.armazenamento.manter_publicados);
+  val("an-ativo", CFG.analytics.ativo);
+  $("#ps-versao").textContent = CFG.pontuacao.versao;
+  $("#ps-pesos").innerHTML = Object.entries(CFG.pontuacao.pesos).map(([k,v]) => `<div><label>${esc(PESOS[k] || k)}</label><input type="number" min="0" max="100" data-peso="${k}" value="${v}"></div>`).join("");
+  $("#cofre-info").textContent = CFG._cofre.erro ? "⚠️ " + CFG._cofre.erro : (CFG._cofre.cifrado ? "🔒 As chaves ficam cifradas com a proteção de dados do Windows (DPAPI), só para o seu usuário." : "As chaves ficam num arquivo só legível pelo seu usuário (sem cifra fora do Windows).");
+  val("yt-client_id", CFG.youtube.client_id); val("yt-privacidade", CFG.youtube.privacidade);
+  val("tt-client_key", CFG.tiktok.client_key); val("tt-redirect_uri", CFG.tiktok.redirect_uri); val("fb-app_id", CFG.facebook.app_id);
+  val("gm-modelo", CFG.gemini.modelo); val("tg-chat_id", CFG.telegram.chat_id); val("tg-avisar_postagem", CFG.telegram.avisar_postagem); val("tg-avisar_erro", CFG.telegram.avisar_erro);
   marcar("st-gemini", CFG.gemini.api_key, "chave salva", "sem chave");
   marcar("st-telegram", CFG.telegram.bot_token && CFG.telegram.chat_id, "ligado", "desligado");
   if(CFG.youtube.canal) $("#st-youtube").textContent = "conectado: " + CFG.youtube.canal;
   if(CFG.facebook.page_nome) $("#st-facebook").textContent = "Página: " + CFG.facebook.page_nome;
   if(CFG.tiktok.usuario) $("#st-tiktok").textContent = "@" + CFG.tiktok.usuario;
+  $("#f-canal").innerHTML = '<option value="">Todos</option>' + CFG.canais.map(c => `<option>${esc(c.nome)}</option>`).join("");
+  $("#f-categoria").innerHTML = '<option value="">Todas</option>' + Object.entries(CFG._categorias).map(([k,v]) => `<option value="${k}">${esc(v)}</option>`).join("");
   desenharCanais(CFG.canais);
 }
 function marcar(id, ok, sim, nao){ const t = $("#" + id); t.textContent = ok ? sim : nao; t.className = "tag " + (ok ? "ok" : ""); }
 function resumoAgendador(){
-  const n = +$("#ag-quantidade").value || 1, por = $("#ag-periodo").value;
-  const min = (por === "hora" ? 60 : 1440) / n;
-  $("#ag-resumo").textContent = `➜ ${n} vídeo(s) por ${por}: um a cada ${min >= 60 ? (min/60).toFixed(min % 60 ? 1 : 0) + " h" : Math.round(min) + " min"}, sempre o de maior nota que ainda não foi postado.`;
+  const n = +$("#ag-quantidade").value || 1, por = $("#ag-periodo").value, min = (por === "hora" ? 60 : 1440) / n;
+  $("#ag-resumo").textContent = `➜ ${n} vídeo(s) por ${por}: um a cada ${min >= 60 ? (min/60).toFixed(min % 60 ? 1 : 0) + " h" : Math.round(min) + " min"}.`;
 }
 ["#ag-quantidade","#ag-periodo"].forEach(s => $(s).addEventListener("input", resumoAgendador));
-
 async function salvarAgendador(){
+  const novoModo = $("#ag-modo").value;
+  if(novoModo === "automatico" && CFG.agendador.modo !== "automatico" && !confirm("No modo automático, cortes que passarem nos filtros são publicados sem revisão (só de canais com autorização registrada). Continuar?")) return;
   const dias = [...document.querySelectorAll("#ag-dias input:checked")].map(i => +i.value);
-  await acao(() => api("/api/config/agendador", {
-    ativo: $("#ag-ativo").checked, quantidade: +$("#ag-quantidade").value || 1, periodo: $("#ag-periodo").value,
-    score_minimo: +$("#ag-score").value, horas_validade: +$("#ag-validade").value || 24,
-    hora_inicio: +$("#ag-inicio").value, hora_fim: +$("#ag-fim").value, dias,
-    exigir_textos_ia: $("#ag-ia").checked,
-    plataformas: {youtube: $("#ag-youtube").checked, tiktok: $("#ag-tiktok").checked, facebook: $("#ag-facebook").checked}
-  }).then(() => ({msg:"Agendador salvo"})));
-  carregarEstado();
+  await acao(() => api("/api/config/agendador", {modo: novoModo, ativo: $("#ag-ativo").checked, quantidade: +$("#ag-quantidade").value || 1,
+    periodo: $("#ag-periodo").value, ordenar_por: $("#ag-ordenar").value, score_minimo: +$("#ag-score").value,
+    score_editorial_minimo: +$("#ag-editorial").value || 0, horas_validade: +$("#ag-validade").value || 24,
+    hora_inicio: +$("#ag-inicio").value, hora_fim: +$("#ag-fim").value, dias, exigir_textos_ia: $("#ag-ia").checked,
+    evitar_mesmo_canal_seguido: $("#ag-canal").checked,
+    plataformas: {youtube: $("#ag-youtube").checked, tiktok: $("#ag-tiktok").checked, facebook: $("#ag-facebook").checked}}).then(() => ({msg:"Agendador salvo"})));
+  carregarConfig(); carregarEstado();
 }
 async function salvarDeteccao(){
+  const mn = +$("#ct-min").value, mx = +$("#ct-max").value;
+  if(mn >= mx) return toast("A duração mínima precisa ser menor que a máxima.", "erro");
   await acao(async () => {
-    await api("/api/config/deteccao", {multiplicador:+$("#dt-mult").value, antes_segundos:+$("#dt-antes").value, depois_segundos:+$("#dt-depois").value, cooldown_segundos:+$("#dt-cooldown").value});
-    await api("/api/config/gravacao", {qualidade:$("#gr-qualidade").value, modelo_whisper:$("#gr-whisper").value, dias_guardar_cortes:+$("#gr-dias").value, legendas:$("#gr-legendas").checked});
+    await api("/api/config/deteccao", {multiplicador:+$("#dt-mult").value, cooldown_segundos:+$("#dt-cooldown").value, agrupar_segundos:+$("#dt-agrupar").value, antes_segundos:+$("#dt-antes").value, depois_segundos:+$("#dt-depois").value});
+    await api("/api/config/corte", {adaptativo:$("#ct-adaptativo").checked, duracao_min:mn, duracao_max:mx, contexto_antes_max:+$("#ct-antes").value, contexto_depois_max:+$("#ct-depois").value});
+    await api("/api/config/gravacao", {qualidade:$("#gr-qualidade").value, modelo_whisper:$("#gr-whisper").value, legendas:$("#gr-legendas").checked});
     return {msg:"Configuração salva"};
   });
 }
+async function salvarLegendas(){
+  await acao(() => api("/api/config/legendas", {estilo:$("#lg-estilo").value, posicao:$("#lg-posicao").value, fonte:$("#lg-fonte").value, tamanho:+$("#lg-tamanho").value,
+    cor:$("#lg-cor").value, cor_destaque:$("#lg-destaque").value, contorno:+$("#lg-contorno").value, margem_inferior:Math.max(420, +$("#lg-margem").value),
+    margem_lateral:+$("#lg-lateral").value, max_caracteres:+$("#lg-chars").value, animacao:$("#lg-animacao").checked}).then(() => ({msg:"Legendas salvas"})));
+}
+async function salvarSistema(){
+  const pesos = Object.fromEntries([...document.querySelectorAll("[data-peso]")].map(i => [i.dataset.peso, Math.max(0, +i.value || 0)]));
+  const mudou = JSON.stringify(pesos) !== JSON.stringify(CFG.pontuacao.pesos);
+  await acao(async () => {
+    await api("/api/config/processamento", {workers_montagem:+$("#pr-workers").value, tentativas_etapa:+$("#pr-tentativas").value});
+    await api("/api/config/armazenamento", {dias_guardar_fontes:+$("#ar-fontes").value, minimo_livre_gb:+$("#ar-livre").value, manter_publicados:$("#ar-publicados").checked});
+    await api("/api/config/gravacao", {dias_guardar_cortes:+$("#gr-dias").value});
+    await api("/api/config/analytics", {ativo:$("#an-ativo").checked});
+    if(mudou) await api("/api/config/pontuacao", {pesos, versao:(CFG.pontuacao.versao||1) + 1});
+    return {msg:"Salvo" + (mudou ? " (nova versão dos pesos; vale para os próximos cortes)" : "")};
+  });
+  carregarConfig();
+}
 
-/* canais */
+/* canais + autorização */
 function desenharCanais(lista){
-  const max = EST.max_canais || 5;
-  $("#form-canais").innerHTML = lista.map((c,i) => `
-    <div class="canal-item" data-i="${i}">
-      <span class="n">${i+1}</span>
-      <input class="c-nome" value="${esc(c.nome)}" placeholder="nome do canal na Twitch (ex.: alanzoka)">
-      <select class="c-layout"><option value="blur" ${c.layout === "split" ? "" : "selected"}>Fundo desfocado</option><option value="split" ${c.layout === "split" ? "selected" : ""}>Câmera em cima</option></select>
-      <label class="chave" style="margin:0"><input type="checkbox" class="c-ativo" ${c.ativo !== false ? "checked" : ""}><span class="trilho"></span></label>
-      <button class="btn perigo peq" onclick="this.parentElement.remove(); contarCanais()">✕</button>
-    </div>`).join("") || `<p class="vazio">Nenhum canal. Clique em "Adicionar canal".</p>`;
+  $("#form-canais").innerHTML = lista.map((c,i) => { const a = c.autorizacao || {}; const redes = a.redes || [];
+    return `<div class="card canal-bloco" style="margin-bottom:12px" data-i="${i}">
+      <div class="linha">
+        <div><label>Canal (Twitch)</label><input class="c-nome" value="${esc(c.nome)}" placeholder="ex.: alanzoka"></div>
+        <div><label>Layout</label><select class="c-layout"><option value="blur" ${c.layout === "split" ? "" : "selected"}>Fundo desfocado</option><option value="split" ${c.layout === "split" ? "selected" : ""}>Câmera em cima</option></select></div>
+        <div><label>Posição da câmera</label><select class="c-cam"><option value="">—</option>${Object.keys(CFG._cam_presets).map(k => `<option value="${k}" ${JSON.stringify(CFG._cam_presets[k]) === JSON.stringify(c.cam) ? "selected" : ""}>${k.replace("_"," ")}</option>`).join("")}</select></div>
+        <div style="flex:0 0 auto"><label class="chave" style="margin-top:28px"><input type="checkbox" class="c-ativo" ${c.ativo !== false ? "checked" : ""}><span class="trilho"></span>vigiar</label></div>
+      </div>
+      <div class="linha">
+        <div><label>Autorização</label><select class="a-status">${CFG._status_autorizacao.map(s => `<option value="${s}" ${a.status === s ? "selected" : ""}>${{nao_registrada:"não registrada",pendente:"pendente",autorizado:"autorizado",negado:"negado",revogada:"revogada"}[s]}</option>`).join("")}</select></div>
+        <div><label>Data da autorização</label><input type="date" class="a-data" value="${esc(a.data_autorizacao)}"></div>
+        <div><label>Válida até (opcional)</label><input type="date" class="a-validade" value="${esc(a.validade)}"></div>
+      </div>
+      <div class="linha">
+        <label class="chave"><input type="checkbox" class="a-gravar" ${a.gravar !== false ? "checked" : ""}><span class="trilho"></span>pode gravar</label>
+        <label class="chave"><input type="checkbox" class="a-editar" ${a.editar !== false ? "checked" : ""}><span class="trilho"></span>pode editar</label>
+        <label class="chave"><input type="checkbox" class="a-publicar" ${a.publicar ? "checked" : ""}><span class="trilho"></span>pode publicar em:</label>
+        ${["youtube","tiktok","facebook"].map(r => `<label class="chave"><input type="checkbox" class="a-rede" value="${r}" ${redes.includes(r) ? "checked" : ""}><span class="trilho"></span>${NOMES[r]}</label>`).join("")}
+      </div>
+      <label>Observações (onde/como foi autorizado)</label><input class="a-obs" value="${esc(a.observacoes)}" maxlength="500">
+      <p class="mini">Registrado em: ${esc(a.data_registro || "—")}</p>
+      <button class="btn perigo peq" onclick="if(confirm('Remover este canal? Os cortes já feitos continuam na biblioteca.')){this.closest('.canal-bloco').remove(); contarCanais()}">✕ Remover canal</button>
+    </div>`; }).join("") || `<p class="vazio">Nenhum canal. Clique em "Adicionar canal".</p>`;
   contarCanais();
 }
 function lerCanais(){
-  return [...document.querySelectorAll(".canal-item")].map(d => ({nome: d.querySelector(".c-nome").value.trim(), layout: d.querySelector(".c-layout").value, ativo: d.querySelector(".c-ativo").checked}));
+  return [...document.querySelectorAll(".canal-bloco")].map(d => { const cam = d.querySelector(".c-cam").value;
+    return {nome: d.querySelector(".c-nome").value.trim(), layout: d.querySelector(".c-layout").value, ativo: d.querySelector(".c-ativo").checked,
+      cam: cam || null, autorizacao: {status: d.querySelector(".a-status").value, data_autorizacao: d.querySelector(".a-data").value,
+      validade: d.querySelector(".a-validade").value, gravar: d.querySelector(".a-gravar").checked, editar: d.querySelector(".a-editar").checked,
+      publicar: d.querySelector(".a-publicar").checked, redes: [...d.querySelectorAll(".a-rede:checked")].map(i => i.value), observacoes: d.querySelector(".a-obs").value}}; });
 }
-function contarCanais(){ $("#add-canal").disabled = document.querySelectorAll(".canal-item").length >= (EST.max_canais || 5); }
-function addCanal(){ const l = lerCanais(); if(l.length >= (EST.max_canais || 5)) return; l.push({nome:"", layout:"blur", ativo:true}); desenharCanais(l); document.querySelectorAll(".c-nome")[l.length-1].focus(); }
+function contarCanais(){ $("#add-canal").disabled = document.querySelectorAll(".canal-bloco").length >= (EST.max_canais || 5); }
+function addCanal(){ const l = lerCanais(); if(l.length >= (EST.max_canais || 5)) return; l.push({nome:"", layout:"blur", ativo:true, autorizacao:{status:"nao_registrada", gravar:true, editar:true, publicar:false, redes:[]}}); desenharCanais(l); }
 async function salvarCanais(){
-  const r = await acao(() => api("/api/canais", {canais: lerCanais().filter(c => c.nome)}));
-  if(r){ toast("Canais salvos: " + (r.canais.map(c => c.nome).join(", ") || "nenhum")); desenharCanais(r.canais); setTimeout(carregarEstado, 800); }
+  const lista = lerCanais().filter(c => c.nome);
+  if(lista.some(c => c.layout === "split" && !c.cam)) return toast("Escolha a posição da câmera para o layout 'Câmera em cima'.", "erro");
+  const r = await acao(() => api("/api/canais", {canais: lista}));
+  if(r){ toast("Canais salvos"); CFG.canais = r.canais; desenharCanais(r.canais); setTimeout(carregarEstado, 800); }
 }
 
 /* contas */
 async function salvarConta(p){
-  const pegar = (pre, campos) => Object.fromEntries(campos.map(c => [c, $("#" + pre + "-" + c).type === "checkbox" ? $("#" + pre + "-" + c).checked : $("#" + pre + "-" + c).value.trim()]));
-  const corpo = {youtube: () => pegar("yt", ["client_id","client_secret","privacidade"]),
-                 tiktok: () => pegar("tt", ["client_key","client_secret","redirect_uri"]),
-                 facebook: () => pegar("fb", ["app_id","app_secret"]),
-                 gemini: () => pegar("gm", ["api_key","modelo"]),
-                 telegram: () => pegar("tg", ["bot_token","chat_id","avisar_postagem","avisar_erro"])}[p]();
+  const pegar = (pre, campos) => Object.fromEntries(campos.map(c => { const e = $("#" + pre + "-" + c); return [c, e.type === "checkbox" ? e.checked : e.value.trim()]; }));
+  const corpo = {youtube: () => pegar("yt", ["client_id","client_secret","privacidade"]), tiktok: () => pegar("tt", ["client_key","client_secret","redirect_uri"]),
+    facebook: () => pegar("fb", ["app_id","app_secret"]), gemini: () => pegar("gm", ["api_key","modelo"]),
+    telegram: () => pegar("tg", ["bot_token","chat_id","avisar_postagem","avisar_erro"])}[p]();
   await acao(() => api("/api/config/" + p, corpo).then(() => ({msg:"Salvo"})));
   document.querySelectorAll(`#c-${p} input[type=password]`).forEach(i => i.value = "");
   await carregarConfig(); carregarEstado();
 }
-async function conectar(p){
-  await salvarConta(p);
-  const r = await acao(() => api(`/api/${p}/login`, {}));
-  if(r && r.url){ window.open(r.url, "_blank"); toast("Faça o login na janela que abriu e volte aqui."); }
-}
-async function colarCodigo(p){
-  await acao(() => api(`/api/${p}/codigo`, {texto: $("#tt-retorno").value}));
-  carregarConfig(); carregarEstado();
-}
+async function conectar(p){ await salvarConta(p); const r = await acao(() => api(`/api/${p}/login`, {})); if(r && r.url){ window.open(r.url, "_blank", "noopener"); toast("Faça o login na janela que abriu e volte aqui."); } }
+async function colarCodigo(p){ await acao(() => api(`/api/${p}/codigo`, {texto: $("#tt-retorno").value})); $("#tt-retorno").value = ""; carregarConfig(); carregarEstado(); }
 const testar = p => acao(() => api(`/api/${p}/testar`, {}));
-async function desconectar(p){ if(!confirm("Desconectar " + p + "?")) return; await acao(() => api("/api/desconectar/" + p, {}).then(() => ({msg:"Desconectado"}))); carregarConfig(); carregarEstado(); }
+async function desconectar(p){ if(!confirm("Desconectar " + p + "? A chave guardada será apagada deste computador.")) return; await acao(() => api("/api/desconectar/" + p, {}).then(() => ({msg:"Desconectado"}))); carregarConfig(); carregarEstado(); }
 async function descobrirChat(){ await salvarConta("telegram"); const r = await acao(() => api("/api/telegram/descobrir", {})); if(r) $("#tg-chat_id").value = r.chat_id; carregarConfig(); }
 async function buscarPaginas(){
   const r = await acao(() => api("/api/facebook/paginas", {app_id:$("#fb-app_id").value.trim(), app_secret:$("#fb-app_secret").value.trim(), token_usuario:$("#fb-token").value.trim()}));
   if(!r) return;
-  $("#fb-paginas").innerHTML = r.length ? "<label>Escolha a Página</label>" + r.map(p => `<button class="btn sec peq" style="margin:4px" onclick="escolherPagina('${esc(p.id)}')">📄 ${esc(p.nome)}</button>`).join("") : "<p>Nenhuma Página nesse token.</p>";
+  $("#fb-paginas").innerHTML = r.length ? "<label>Escolha a Página</label>" + r.map(p => `<button class="btn sec peq" style="margin:4px" data-id="${esc(p.id)}" onclick="escolherPagina(this.dataset.id)">📄 ${esc(p.nome)}</button>`).join("") : "<p>Nenhuma Página nesse token.</p>";
 }
 async function escolherPagina(id){ await acao(() => api("/api/facebook/escolher", {id})); $("#fb-paginas").innerHTML = ""; $("#fb-token").value = ""; carregarConfig(); carregarEstado(); }
 
-/* ranking */
-async function carregarRanking(){
-  const lista = await api("/api/ranking?horas=" + $("#rk-horas").value).catch(e => (toast(e.message, "erro"), []));
-  const maior = Math.max(1, ...lista.map(c => c.score));
-  $("#lista-ranking").innerHTML = lista.length ? lista.map((c,i) => {
-    const posts = (c.postagens || []).map(p => `<span class="tag ${p.status === "postado" ? "ok" : p.status === "erro" ? "erro" : "warn"}" title="${esc(p.erro)}">${NOMES[p.plataforma]} ${p.status === "postado" && p.url.startsWith("http") ? `<a href="${esc(p.url)}" target="_blank" style="color:inherit">✓</a>` : p.status}</span>`).join(" ");
-    return `<div class="card corte ${i === 0 ? "medalha-1" : ""}" style="margin-bottom:12px" id="corte-${c.id}">
-      <video src="/video/${c.id}#t=1" controls preload="metadata"></video>
-      <div>
-        <div><span class="pos">#${i+1}</span><b>${esc(c.canal)}</b> <span class="tag">${quando(c.criado)}</span> <span class="tag warn">nota ${c.score.toFixed(1)}</span></div>
-        <div class="barra"><i style="width:${c.score / maior * 100}%"></i></div>
-        <label>Título</label><input class="t-titulo" value="${esc(c.titulo)}" placeholder="(sem título da IA ainda)">
-        <label>Legenda</label><textarea class="t-legenda">${esc(c.legenda)}</textarea>
-        <label>Hashtags</label><input class="t-tags" value="${esc((c.hashtags || []).join(" "))}">
-        ${c.fala ? `<p>🗣️ “${esc(c.fala.slice(0, 220))}${c.fala.length > 220 ? "…" : ""}”</p>` : ""}
-        <div class="pl">${posts}</div>
-        <div class="acoes">
-          <button class="btn sec peq" onclick="salvarTextos(${c.id}, this)">💾 Salvar textos</button>
-          <button class="btn sec peq" onclick="regerar(${c.id}, this)">🤖 Gerar de novo</button>
-          <button class="btn peq" onclick="postarAgora(${c.id}, this)">🚀 Postar agora</button>
-          <button class="btn perigo peq" onclick="descartar(${c.id}, this)">🗑 Descartar</button>
-        </div>
-      </div></div>`;
-  }).join("") : `<div class="card vazio"><span class="icone">✂️</span>Ainda não há cortes. Eles aparecem aqui quando o chat de um canal vigiado explodir.</div>`;
+/* cortes */
+function cartaoCorte(c, i){
+  const posts = (c.postagens || []).map(p => `<span class="tag ${p.status === "postado" ? "ok" : p.status === "erro" ? "erro" : "warn"}" title="${esc(p.erro)}">${NOMES[p.plataforma]} ${p.status === "postado" && (p.url||"").startsWith("http") ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:inherit">✓</a>` : esc(p.status)}</span>`).join(" ");
+  const flags = (c.flags || []).map(f => `<span class="tag warn">${esc(f.replace("ia:","IA: ").replaceAll("_"," "))}</span>`).join(" ");
+  const pronto = ["aguardando_revisao","aprovado"].includes(c.estado);
+  return `<div class="card corte ${i === 0 ? "medalha-1" : ""}" style="margin-bottom:12px" id="corte-${c.id}">
+    ${c.arquivo_removido ? '<div class="vazio">vídeo apagado<br>(retenção)</div>' : `<video src="/video/${c.id}?r=${c.versao_render||0}#t=1" controls preload="metadata"></video>`}
+    <div>
+      <div><span class="pos">#${i+1}</span><b>${esc(c.canal)}</b> <span class="tag">${quando(c.criado)}</span> <span class="tag">${esc(ESTADOS[c.estado] || c.estado)}</span>
+        ${c.categoria ? `<span class="tag">${esc((CFG._categorias||{})[c.categoria] || c.categoria)}</span>` : ""} ${c.duracao ? `<span class="tag">${Math.round(c.duracao)} s</span>` : ""}</div>
+      <div class="notas"><span class="tag warn">pico ${(+c.score).toFixed(1)}x</span>
+        <span class="tag ${c.score_editorial >= 60 ? "ok" : ""}" title="confiança ${Math.round((c.confianca||0)*100)}%">nota editorial ${nota(c.score_editorial)}${c.score_editorial !== null && c.score_editorial !== undefined ? ` · conf. ${Math.round((c.confianca||0)*100)}%` : ""}</span>
+        <span class="tag">técnica ${nota(c.score_tecnico)}</span></div>
+      ${c.erro ? `<p style="color:#ff8fa2">⚠️ ${esc(c.erro)} ${c.proxima_acao ? "· " + esc(c.proxima_acao) : ""}</p>` : ""}
+      ${(c.analise||{}).resumo ? `<p>🧠 ${esc(c.analise.resumo)}</p>` : ""}
+      ${pronto ? `<label>Título</label><input class="t-titulo" value="${esc(c.titulo)}" placeholder="(sem título da IA ainda)">
+      <label>Legenda</label><textarea class="t-legenda">${esc(c.legenda)}</textarea>
+      <label>Hashtags</label><input class="t-tags" value="${esc((c.hashtags || []).join(" "))}">` : ""}
+      ${c.fala ? `<p>🗣️ “${esc(c.fala.slice(0, 220))}${c.fala.length > 220 ? "…" : ""}”</p>` : ""}
+      <div class="pl">${flags} ${posts}</div>
+      <div class="acoes">
+        ${pronto ? `<button class="btn sec peq" onclick="salvarTextos(${c.id}, this)">💾 Salvar textos</button>
+        <button class="btn sec peq" onclick="regerar(${c.id}, this)">🤖 Reanalisar</button>
+        ${c.estado === "aprovado" ? `<button class="btn sec peq" onclick="aprovar(${c.id}, false, this)">↩ Desaprovar</button>` : `<button class="btn peq" onclick="aprovar(${c.id}, true, this)">✅ Aprovar</button>`}
+        <button class="btn sec peq" onclick="abrirEditor(${c.id})">🎬 Editar</button>
+        <button class="btn peq" onclick="postarAgora(${c.id}, this)">🚀 Postar agora</button>` : ""}
+        ${c.estado === "falhou" ? `<button class="btn peq" onclick="reprocessar(${c.id}, this)">🔁 Reprocessar</button>` : ""}
+        ${c.estado === "descartado" ? `<button class="btn sec peq" onclick="descartar(${c.id}, false, this)">♻ Recuperar</button>` : `<button class="btn perigo peq" onclick="descartar(${c.id}, true, this)">🗑 Descartar</button>`}
+        <button class="btn sec peq" onclick="historico(${c.id}, this)">🕘 Histórico</button>
+      </div>
+      <div class="hist" id="hist-${c.id}"></div>
+    </div></div>`;
 }
+async function carregarCortes(){
+  const q = new URLSearchParams({estado:$("#f-estado").value, ordenar:$("#f-ordenar").value, horas:$("#f-horas").value, canal:$("#f-canal").value, categoria:$("#f-categoria").value});
+  $("#lista-cortes").innerHTML = '<div class="vazio">carregando…</div>';
+  const lista = await api("/api/biblioteca?" + q).catch(e => (toast(e.message, "erro"), []));
+  $("#lista-cortes").innerHTML = lista.length ? lista.map(cartaoCorte).join("") : `<div class="card vazio"><span class="icone">✂️</span>Nenhum corte com esses filtros.</div>`;
+}
+["#f-estado","#f-ordenar","#f-horas","#f-canal","#f-categoria"].forEach(s => $(s).addEventListener("change", carregarCortes));
 const blocoCorte = id => $("#corte-" + id);
-async function salvarTextos(id, b){ const d = blocoCorte(id);
+async function salvarTextos(id, b){ const d = blocoCorte(id); if(!d) return;
   await acao(() => api(`/api/corte/${id}/textos`, {titulo:d.querySelector(".t-titulo").value, legenda:d.querySelector(".t-legenda").value, hashtags:d.querySelector(".t-tags").value}).then(() => ({msg:"Textos salvos"})), b); }
-async function regerar(id, b){ const t = await acao(() => api(`/api/corte/${id}/regerar`, {}), b); if(t){ toast("Novos textos do Gemini"); carregarRanking(); } }
+async function regerar(id, b){ const t = await acao(() => api(`/api/corte/${id}/reanalisar`, {}), b); if(t){ toast("Nova análise do Gemini"); carregarCortes(); } }
+async function aprovar(id, sim, b){ await acao(() => api(`/api/corte/${id}/${sim ? "aprovar" : "desaprovar"}`, {}).then(() => ({msg: sim ? "Aprovado: entra na fila do agendador" : "Aprovação retirada"})), b); carregarCortes(); }
+async function reprocessar(id, b){ await acao(() => api(`/api/corte/${id}/reprocessar`, {}).then(r => ({msg:"Reprocessando a partir de: " + (ESTADOS[r.estado] || r.estado)})), b); carregarCortes(); }
+async function descartar(id, sim, b){
+  let motivo = "";
+  if(sim){ motivo = prompt("Motivo do descarte (opcional):", "") ; if(motivo === null) return; }
+  await acao(() => api(`/api/corte/${id}/descartar`, {sim, motivo}), b); carregarCortes();
+}
+async function historico(id, b){
+  const c = await acao(() => api(`/api/corte/${id}`), b); if(!c) return;
+  $("#hist-" + id).innerHTML = c.historico.map(h => `${quando(h.quando)} · <b>${esc(ESTADOS[h.estado] || h.estado)}</b> ${esc(h.detalhe)}`).join("<br>") +
+    (c.postagens.length ? "<br>" + c.postagens.map(p => `${quando(p.quando)} · ${NOMES[p.plataforma]} <b>${esc(p.status)}</b> ${esc(p.erro || p.detalhe || "")}`).join("<br>") : "");
+}
 async function postarAgora(id, b){
   const plats = Object.entries(EST.plataformas || {}).filter(([,p]) => p.conectado).map(([k]) => k);
-  if(!plats.length) return toast("Conecte uma conta na aba Contas.", "erro");
-  if(!confirm("Postar agora em: " + plats.map(p => NOMES[p]).join(", ") + "?")) return;
+  if(!plats.length) return toast("Conecte uma rede em Configurações → Redes e IA.", "erro");
+  const escolha = prompt("Postar agora em quais redes? (separe por vírgula)\nDisponíveis: " + plats.join(", "), plats.join(", "));
+  if(escolha === null) return;
+  const alvo = escolha.split(",").map(s => s.trim()).filter(s => plats.includes(s));
+  if(!alvo.length) return;
   await salvarTextos(id);
-  const r = await acao(() => api(`/api/corte/${id}/postar`, {plataformas: plats}), b);
-  if(r){ const erros = Object.entries(r).filter(([,v]) => !v.ok); toast(erros.length ? erros.map(([k,v]) => NOMES[k] + ": " + v.erro).join(" · ") : "Postado! 🚀", erros.length ? "erro" : "ok"); carregarRanking(); }
+  const enviar = extra => api(`/api/corte/${id}/postar`, {plataformas: alvo, ...extra});
+  let r = await acao(() => enviar({}), b); if(!r) return;
+  const bloqueados = Object.entries(r).filter(([,v]) => !v.ok && /bloqueada/.test(v.erro)).map(([k]) => k);
+  if(bloqueados.length && confirm("Este canal não tem autorização registrada para: " + bloqueados.join(", ") + ".\nVocê confirma que tem autorização para publicar este corte?")){
+    const r2 = await acao(() => api(`/api/corte/${id}/postar`, {plataformas: bloqueados, ignorar_autorizacao: true}), b); Object.assign(r, r2 || {});
+  }
+  const repetidos = Object.entries(r).filter(([,v]) => !v.ok && /já está/.test(v.erro)).map(([k]) => k);
+  if(repetidos.length && confirm("Este corte já foi enviado para: " + repetidos.join(", ") + ". Postar de novo de propósito?")){
+    const r3 = await acao(() => api(`/api/corte/${id}/postar`, {plataformas: repetidos, forcar: true}), b); Object.assign(r, r3 || {});
+  }
+  const erros = Object.entries(r).filter(([,v]) => !v.ok);
+  toast(erros.length ? erros.map(([k,v]) => NOMES[k] + ": " + v.erro).join(" · ") : "Enviado! 🚀 Acompanhe em Publicações.", erros.length ? "erro" : "ok");
+  carregarCortes();
 }
-async function descartar(id, b){ await acao(() => api(`/api/corte/${id}/descartar`, {sim:true}), b); blocoCorte(id).remove(); }
 
-/* log */
+/* editor */
+async function abrirEditor(id){ location.hash = "editor"; const d = await acao(() => api("/api/editor/" + id)); if(!d) return; EDIT = d; desenharEditor(); }
+function desenharEditor(){
+  const c = EDIT.corte, segs = EDIT.segmentos;
+  $("#editor").innerHTML = `<div class="card"><h2>🎬 Editor — ${esc(c.canal)} · ${esc(c.titulo || "sem título")}</h2>
+    ${EDIT.tem_fonte ? "" : '<div class="aviso-faixa">A fonte deste corte já foi apagada pela retenção (ou é um corte da versão 1.x). Dá para editar os textos na aba Cortes, mas não montar o vídeo de novo.</div>'}
+    <div class="editor-grid">
+      <div>
+        <div class="previa zonas" id="previa"><video src="/video/${c.id}?r=${c.versao_render||0}" controls id="ed-video"></video>
+          <div class="zona" style="top:0;height:${220/1920*100}%"></div><div class="zona" style="bottom:0;height:${420/1920*100}%"></div></div>
+        <label class="chave"><input type="checkbox" checked onchange="$('#previa').classList.toggle('zonas', this.checked)"><span class="trilho"></span>Mostrar área segura</label>
+        ${EDIT.tem_original ? `<p class="mini">O vídeo original (antes da edição) está guardado. <a href="/video/${c.id}?v=original" target="_blank" style="color:var(--ciano)">Ver original</a></p>` : ""}
+        <h3>⏱️ Corte na fonte</h3>
+        <div class="linha"><div><label>Início (s)</label><input type="number" step="0.1" id="ed-ini" value="${c.corte_ini}"></div><div><label>Fim (s)</label><input type="number" step="0.1" id="ed-fim" value="${c.corte_fim}"></div></div>
+        <p class="mini">Fonte com ${Math.round(EDIT.duracao_fonte)} s. Mudar início/fim refaz o vídeo; as legendas se ajustam ao novo trecho se você não editar o texto.</p>
+      </div>
+      <div>
+        <h3>💬 Legendas (${segs.length} blocos)</h3>
+        <p class="mini">Tempos em segundos a partir do início do corte. Edite o texto, ajuste os tempos e clique em Montar de novo.</p>
+        <div id="ed-segs">${segs.map((s,i) => `<div class="seg" data-i="${i}"><input type="number" step="0.05" class="s-ini" value="${s.ini}"><input type="number" step="0.05" class="s-fim" value="${s.fim}"><input class="s-txt" value="${esc(s.texto)}"><button class="btn perigo peq" onclick="this.parentElement.remove()">✕</button></div>`).join("")}</div>
+        <button class="btn sec peq" onclick="addSeg()">＋ Bloco</button>
+        <div class="acoes"><button class="btn" id="ed-btn" ${EDIT.tem_fonte ? "" : "disabled"} onclick="remontar(this)">🎬 Montar de novo</button>
+          <button class="btn sec" onclick="location.hash='cortes'">← Voltar aos cortes</button></div>
+        <p class="mini">Montar de novo reaproveita a gravação, a transcrição e os textos: não repete captura nem IA. O estilo segue Configurações → Legendas.</p>
+      </div>
+    </div></div>`;
+}
+function addSeg(){ const d = document.createElement("div"); d.className = "seg"; const ult = [...document.querySelectorAll(".s-fim")].pop(); const t = ult ? +ult.value : 0;
+  d.innerHTML = `<input type="number" step="0.05" class="s-ini" value="${t}"><input type="number" step="0.05" class="s-fim" value="${(t+1.5).toFixed(2)}"><input class="s-txt" value=""><button class="btn perigo peq" onclick="this.parentElement.remove()">✕</button>`;
+  $("#ed-segs").appendChild(d); }
+async function remontar(b){
+  const orig = EDIT.segmentos;
+  const segs = [...document.querySelectorAll("#ed-segs .seg")].map(d => { const o = orig[+d.dataset.i] || {};
+    return {ini: +d.querySelector(".s-ini").value, fim: +d.querySelector(".s-fim").value, texto: d.querySelector(".s-txt").value, palavras: o.texto === d.querySelector(".s-txt").value ? (o.palavras || []) : []}; });
+  const ini = +$("#ed-ini").value, fim = +$("#ed-fim").value;
+  const mudouTrecho = Math.abs(ini - EDIT.corte.corte_ini) > 0.01 || Math.abs(fim - EDIT.corte.corte_fim) > 0.01;
+  const mudouTexto = JSON.stringify(segs.map(s => [s.ini,s.fim,s.texto])) !== JSON.stringify(orig.map(s => [s.ini,s.fim,s.texto]));
+  b.textContent = "⏳ montando…";
+  const r = await acao(() => api(`/api/corte/${EDIT.corte.id}/remontar`, {segmentos: mudouTexto || !mudouTrecho ? segs : null, ...(mudouTrecho ? {ini, fim} : {})}), b);
+  b.textContent = "🎬 Montar de novo";
+  if(r){ toast(`Vídeo refeito (versão ${r.versao}, ${Math.round(r.duracao)} s)`); abrirEditor(EDIT.corte.id); }
+}
+
+/* fila */
+async function carregarFila(){
+  const f = await api("/api/fila").catch(e => (toast(e.message, "erro"), null)); if(!f) return;
+  const modo = {manual:"Manual: nada é publicado sozinho.", semiautomatico:"Semiautomático: o agendador publica só os cortes que você aprovou.", automatico:"Automático: publica o que passa nos filtros."}[f.modo];
+  $("#fila-modo").textContent = modo + (f.ativo ? " Agendador ligado." : " Agendador desligado.");
+  const lista = (itens, vazio, extra = c => "") => itens.length ? itens.map(c => `<div class="linha" style="align-items:center;margin-bottom:6px"><div><b>${esc(c.canal)}</b> · ${esc(c.titulo || "(sem título)")} <span class="tag warn">pico ${(+c.score).toFixed(1)}x</span> <span class="tag">nota ${nota(c.score_editorial)}</span> ${extra(c)}</div></div>`).join("") : `<p class="mini">${vazio}</p>`;
+  $("#fila").innerHTML = `
+    ${f.incertos.length ? `<div class="card" style="margin-bottom:14px;border-color:var(--amarelo)"><h3>⚠️ Envios interrompidos — confira na rede</h3>${f.incertos.map(p => `<div class="linha" style="align-items:center"><div>${NOMES[p.plataforma]} · corte #${p.corte_id} · ${quando(p.quando)}</div>
+      <div style="flex:0 0 auto"><button class="btn peq" onclick="resolver(${p.id}, true)">Foi publicado</button> <button class="btn sec peq" onclick="resolver(${p.id}, false)">Não foi</button></div></div>`).join("")}</div>` : ""}
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(330px,1fr))">
+      ${Object.entries(f.plataformas).map(([k,p]) => `<div class="card"><h3>${NOMES[k]} — próximos</h3>${lista(p.proximos, "Nada pronto para esta rede.")}
+        ${p.bloqueados.length ? `<details><summary>${p.bloqueados.length} fora da fila (motivo)</summary>${lista(p.bloqueados, "", c => `<span class="tag erro">${esc(c.motivo)}</span>`)}</details>` : ""}</div>`).join("")}
+      <div class="card"><h3>👀 Aguardando revisão (${f.revisao.length})</h3>${lista(f.revisao, "Nenhum.")}<button class="btn sec peq" onclick="$('#f-estado').value='aguardando_revisao'; location.hash='cortes'">Revisar na biblioteca</button></div>
+      <div class="card"><h3>✅ Aprovados (${f.aprovados.length})</h3>${lista(f.aprovados, "Nenhum.")}</div>
+      <div class="card"><h3>⚙️ Em processamento (${f.andamento.length})</h3>${lista(f.andamento, "Nada processando.", c => `<span class="tag">${esc(ESTADOS[c.estado])}</span>${c.erro ? ` <span class="tag erro" title="${esc(c.erro)}">nova tentativa</span>` : ""}`)}</div>
+      <div class="card"><h3>📤 Publicando (${f.processando.length})</h3>${f.processando.length ? f.processando.map(p => `<p>${NOMES[p.plataforma]} · corte #${p.corte_id} · enviado ${quando(p.quando)} — a rede ainda está processando</p>`).join("") : '<p class="mini">Nenhum.</p>'}</div>
+      <div class="card"><h3>❌ Falhas (${f.falhas.length})</h3>${lista(f.falhas, "Nenhuma.", c => `<span class="tag erro" title="${esc(c.erro)}">${esc((c.erro||"").slice(0,50))}</span>`)}</div>
+    </div>`;
+}
+async function resolver(id, publicado){
+  let url = "";
+  if(publicado){ url = prompt("Link do vídeo publicado (opcional):", "") || ""; }
+  await acao(() => api(`/api/postagem/${id}/resolver`, {publicado, url})); carregarFila(); carregarEstado();
+}
+
+/* publicações */
 async function carregarLog(){
   const [posts, ev] = await Promise.all([api("/api/log"), api("/api/eventos")]).catch(e => (toast(e.message, "erro"), [[],[]]));
+  const cls = s => s === "postado" ? "ok" : s === "erro" ? "erro" : "warn";
   $("#log-post").innerHTML = posts.length ? posts.map(p => `<tr>
     <td>${quando(p.quando)}</td><td>${NOMES[p.plataforma]}<br><span class="tag">${esc(p.origem)}</span></td>
-    <td><b>${esc(p.titulo || "(sem título)")}</b><br><span style="color:var(--sub)">${esc(p.canal)}</span></td>
-    <td>${p.score.toFixed(1)}</td>
-    <td>${p.status === "postado" ? `<span class="tag ok">postado</span><br>${p.url.startsWith("http") ? `<a href="${esc(p.url)}" target="_blank">${esc(p.url)}</a>` : esc(p.url)}` : p.status === "erro" ? `<span class="tag erro">erro</span><br><span style="color:#ff8fa2">${esc(p.erro)}</span>` : '<span class="tag warn">enviando…</span>'}</td></tr>`).join("")
-    : `<tr><td colspan="5" class="vazio">Nada postado ainda.</td></tr>`;
+    <td><b>${esc(p.titulo || "(sem título)")}</b><br><span class="mini">${esc(p.canal)} · corte #${p.corte_id}</span></td>
+    <td>pico ${(+p.score).toFixed(1)}x<br>nota ${nota(p.score_editorial)}</td>
+    <td><span class="tag ${cls(p.status)}">${esc(p.status)}</span>${p.tipo_erro ? ` <span class="tag">${esc(p.tipo_erro)}</span>` : ""}<br>${(p.url||"").startsWith("http") ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a>` : ""}${p.erro ? `<span style="color:#ff8fa2">${esc(p.erro)}</span>` : ""}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="vazio">Nada publicado ainda.</td></tr>`;
   $("#eventos").innerHTML = ev.map(e => `<div class="${esc(e.nivel)}">${quando(e.quando)} · ${esc(e.texto)}</div>`).join("") || "Sem atividade.";
+}
+
+/* analytics */
+async function carregarAnalytics(){
+  const a = await api("/api/analytics").catch(e => (toast(e.message, "erro"), null)); if(!a) return;
+  const tabela = (titulo, linhas) => `<div class="card"><h3>${titulo}</h3>${linhas.length ? `<table class="tabela"><tr><th>Grupo</th><th>Vídeos</th><th>Média de views</th><th>Média de curtidas</th></tr>${linhas.map(l => `<tr><td>${esc(l.grupo)}${l.amostra_suficiente ? "" : ' <span class="tag">amostra pequena</span>'}</td><td>${l.videos}</td><td>${l.media_views}</td><td>${l.media_likes}</td></tr>`).join("")}</table>` : '<p class="mini">Sem dados ainda.</p>'}</div>`;
+  $("#analytics").innerHTML = `<div class="card" style="margin-bottom:14px"><h3>🔎 O que dá para medir</h3>${Object.entries(a.disponibilidade).map(([k,v]) => `<p>${NOMES[k]}: ${esc(v)}</p>`).join("")}
+    <p><b>${a.total_videos_medidos}</b> vídeo(s) com métricas coletadas.</p>${a.recomendacoes.map(r => `<p>💡 ${esc(r)}</p>`).join("")}
+    <p class="mini">As recomendações são só informativas: nenhum peso ou regra muda sozinho.</p></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))">
+      ${tabela("Por categoria", a.tabelas.categoria)}${tabela("Por duração", a.tabelas.duracao)}${tabela("Por nota editorial", a.tabelas.nota_editorial)}
+      ${tabela("Por canal", a.tabelas.canal)}${tabela("Por horário de postagem", a.tabelas.hora_postagem)}</div>`;
+}
+
+/* diagnóstico */
+async function carregarDiag(){
+  const d = await api("/api/diagnostico").catch(e => (toast(e.message, "erro"), null)); if(!d) return;
+  const s = d.sistema, m = s.memoria || {};
+  $("#diagnostico").innerHTML = `
+    <div class="card" style="margin-bottom:14px"><h3>Saúde geral ${saude(d.geral)}</h3>${d.alertas.map(a => `<p style="color:var(--amarelo)">⚠️ ${esc(a)}</p>`).join("") || "<p>Nenhum alerta.</p>"}</div>
+    <div class="grid">
+      <div class="card"><h3>💻 Recursos</h3><p>CPUs: ${s.cpus} ${s.carga_1min !== null ? "· carga " + s.carga_1min.toFixed(1) : ""}</p><p>Memória: ${m.livre_gb ?? "?"} GB livres de ${m.total_gb ?? "?"} GB</p>
+        <p>Disco: ${s.disco.livre_gb} GB livres de ${s.disco.total_gb} GB ${s.disco.baixo ? '<span class="tag erro">baixo</span>' : ""}</p>
+        <p class="mini">Uso: buffer ${s.uso_pastas_gb.buffer} GB · cortes ${s.uso_pastas_gb.cortes} GB · modelos ${s.uso_pastas_gb.modelos} GB · backups ${s.uso_pastas_gb.backups} GB</p>
+        <p class="mini">Chaves: ${s.cofre_cifrado ? "cifradas (DPAPI)" : "arquivo protegido por permissão"} · threads: ${s.threads}</p></div>
+      <div class="card"><h3>🧩 Dependências</h3>${Object.entries(d.dependencias).map(([k,v]) => `<p><b>${esc(k)}</b>: <span class="mini">${esc(v)}</span></p>`).join("")}</div>
+      <div class="card"><h3>🔌 Contas e serviços</h3>${Object.entries(d.saude).map(([k,v]) => `<p><b>${esc(NOMES[k] || k)}</b> ${saude(v.estado)}<br><span class="mini">${esc(v.texto || "")}</span></p>`).join("")}</div>
+      <div class="card"><h3>⚙️ Processos internos</h3>${Object.entries(d.workers).map(([k,w]) => `<p>${esc(k)} ${saude(w.ok ? "operacional" : "falha")} <span class="mini">${quando(w.ultimo_batimento)}</span></p>`).join("") || '<p class="mini">iniciando…</p>'}
+        <p>Banco: ${esc(d.banco.integridade)}</p><p class="mini">${Object.entries(d.banco.estados).map(([k,v]) => `${esc(ESTADOS[k] || k)}: ${v}`).join(" · ")}</p></div>
+      <div class="card"><h3>📡 Gravações</h3>${d.canais.map(c => `<p><b>${esc(c.nome)}</b> ${saude(c.ao_vivo ? "operacional" : "nao_validado")} <span class="mini">${c.ao_vivo ? "gravando" : "offline"} · reinícios ${c.reinicios}${c.bloco_ha_s !== null ? " · último bloco há " + c.bloco_ha_s + " s" : ""}</span></p>`).join("") || '<p class="mini">Nenhum canal.</p>'}</div>
+      <div class="card"><h3>🧯 Erros recentes</h3><div class="eventos">${d.erros_recentes.map(e => `<div class="${esc(e.nivel)}">${quando(e.quando)} · ${esc(e.texto)}</div>`).join("") || "Nenhum."}</div></div>
+    </div>`;
 }
 
 async function encerrar(){
@@ -551,13 +878,12 @@ async function encerrar(){
   document.body.innerHTML = '<div class="vazio" style="padding-top:20vh"><span class="icone">✂️</span><h2>CortesEX-PRESS encerrado</h2><p>Abra de novo pelo atalho da área de trabalho.</p></div>';
 }
 
-/* início */
 (async () => {
   await carregarEstado();
   await carregarConfig().catch(e => toast(e.message, "erro"));
   lerHash();
   setInterval(carregarEstado, 5000);
-  setInterval(() => { if($("#aba-log").classList.contains("ativa")) carregarLog(); }, 15000);
+  setInterval(() => { if($("#aba-publicacoes").classList.contains("ativa")) carregarLog(); if($("#aba-fila").classList.contains("ativa")) carregarFila(); }, 15000);
 })();
 </script>
 </body>

@@ -14,7 +14,9 @@ import webbrowser
 from logging.handlers import RotatingFileHandler
 
 from cortesex import NOME, PORTA
+from cortesex.atualizacao import backup_se_mudou
 from cortesex.config import pasta_dados
+from cortesex.seguranca import RedigirLog
 
 
 def ja_aberto(porta: int) -> bool:
@@ -29,10 +31,12 @@ def configurar_log():
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
     arq = RotatingFileHandler(pasta_dados() / "cortesex.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
     arq.setFormatter(fmt)
+    arq.addFilter(RedigirLog())          # nenhuma chave/token vai para o arquivo de log
     raiz.addHandler(arq)
     if sys.stderr and not getattr(sys, "frozen", False):
         tela = logging.StreamHandler()
         tela.setFormatter(fmt)
+        tela.addFilter(RedigirLog())
         raiz.addHandler(tela)
 
 
@@ -42,6 +46,9 @@ def main(abrir_navegador: bool = True):
         webbrowser.open(url)
         return
     configurar_log()
+    copia = backup_se_mudou(pasta_dados())
+    if copia:
+        logging.getLogger("cortesex").info("versão nova: backup da configuração e do banco em %s", copia.name)
     from cortesex.motor import Motor
     from cortesex.servidor import Painel
     motor = Motor()
