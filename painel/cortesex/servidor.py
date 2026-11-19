@@ -25,7 +25,7 @@ from cortesex.util import pasta_app
 log = logging.getLogger("cortesex")
 WEB = pasta_app() / "web"
 SECOES = ("gravacao", "deteccao", "agendador", "youtube", "tiktok", "facebook", "gemini", "telegram",
-          "corte", "legendas", "pontuacao", "processamento", "armazenamento", "analytics", "atualizacoes", "zernio")
+          "corte", "legendas", "pontuacao", "processamento", "armazenamento", "analytics", "atualizacoes", "zernio", "openrouter")
 
 
 def extrair_codigo(texto: str) -> tuple[str, str]:
@@ -187,7 +187,8 @@ class Painel:
         if mm := re.fullmatch(r"/api/desconectar/(\w+)", caminho):
             p = mm.group(1)
             campos = {"youtube": ["refresh_token"], "tiktok": ["refresh_token", "access_token"],
-                      "facebook": ["page_token"], "gemini": ["api_key"], "telegram": ["bot_token"]}[p]
+                      "facebook": ["page_token"], "gemini": ["api_key"], "telegram": ["bot_token"],
+                      "openrouter": ["api_key"], "zernio": ["api_key"]}[p]
             for k in campos:
                 cfg.apagar_segredo(p, k)
             return {"ok": True}
@@ -324,6 +325,12 @@ class Painel:
             return {"ok": True, "msg": f"Página escolhida: {p['nome']}"}
         if caminho == "/api/facebook/testar":
             return {"msg": facebook.testar(cfg.get("facebook"))}
+        if caminho == "/api/openrouter/testar":
+            o = cfg.get("openrouter")
+            modelos = [x for x in str(o.get("modelos") or "").replace("\n", ",").split(",") if x.strip()]
+            t = ia.analisar_openrouter("teste", "Meu Deus, que jogada! Ganhei a partida no último segundo!",
+                                       ["KKKKKK", "QUE ISSO", "clipa"], o.get("api_key"), modelos)
+            return {"msg": f"Funcionando ({t['modelo']}). Exemplo: {t['titulo']}"}
         if caminho == "/api/gemini/testar":
             g = cfg.get("gemini")
             t = ia.gerar_textos("teste", "Meu Deus, que jogada! Ganhei a partida no último segundo!",

@@ -179,3 +179,108 @@ def gerar_textos(canal: str, fala: str, chat: list, chave: str, modelo: str = PA
     """Compatibilidade: só título, legenda e hashtags."""
     r = analisar_e_escrever(canal, fala, chat, chave, modelo, post=post, dormir=dormir)
     return {"titulo": r["titulo"], "legenda": r["legenda"], "hashtags": r["hashtags"]}
+
+
+# ----------------------------------------------------------------- OpenRouter (reserva do Gemini)
+OPENROUTER = "https://openrouter.ai/api/v1"
+ORCAMENTO_OPENROUTER = 90    # s
+_cache_modelos = {"quando": 0.0, "lista": []}
+_PREFERIDOS = ("google/", "nvidia/", "meta-llama/", "qwen/", "deepseek/", "mistralai/", "baidu/")
+_PEQUENO = re.compile(r"(?<![\d.])(0\.\d+|1(\.\d+)?|2|3)b\b", re.I)
+
+
+def modelos_gratis(get=requests.get, relogio=time.time, quantos=3) -> list:
+    """Modelos ':free' do OpenRouter que aceitam resposta em JSON (a lista muda sempre: consulta a cada 12 h)."""
+    if _cache_modelos["lista"] and relogio() - _cache_modelos["quando"] < 12 * 3600:
+        return _cache_modelos["lista"][:quantos]
+    r = get(f"{OPENROUTER}/models", timeout=20)
+    r.raise_for_status()
+    bons = [m for m in r.json().get("data", [])
+            if str(m.get("id", "")).endswith(":free") and "response_format" in (m.get("supported_parameters") or [])
+            and not _PEQUENO.search(m["id"])]
+    bons.sort(key=lambda m: (not m["id"].startswith(_PREFERIDOS), -(m.get("context_length") or 0)))
+    _cache_modelos.update(quando=relogio(), lista=[m["id"] for m in bons])
+    return _cache_modelos["lista"][:quantos]
+
+
+def analisar_openrouter(canal: str, fala: str, chat: list, chave: str, modelos=None, post=requests.post,
+                        get=requests.get, dormir=time.sleep, relogio=time.monotonic) -> dict:
+    """Mesma análise do Gemini, pelo OpenRouter. `modelos` vazio = escolhe os grátis do momento.
+    O OpenRouter recebe a lista em "models" e pula sozinho para o próximo se um estiver ocupado."""
+    if not chave:
+        raise SemChave("Coloque a chave do OpenRouter em Configurações → OpenRouter.")
+    lista = [m.strip() for m in (modelos or []) if str(m).strip()] or modelos_gratis(get=get)
+    if not lista:
+        raise RuntimeError("o OpenRouter não tem modelo grátis com resposta em JSON agora")
+    corpo = {"model": lista[0], "models": lista[:3], "response_format": {"type": "json_object"},
+             "temperature": 0.6, "messages": montar_mensagens(canal, fala, chat)}
+    cab = {"Authorization": f"Bearer {chave}", "X-Title": "CortesEX-PRESS"}
+    ultimo, inicio = "o OpenRouter não respondeu", relogio()
+    for tentativa in range(4):
+        if relogio() - inicio > ORCAMENTO_OPENROUTER:
+            ultimo += f" (tempo máximo de {ORCAMENTO_OPENROUTER} s atingido)"
+            break
+        try:
+            resp = post(f"{OPENROUTER}/chat/completions", headers=cab, json=corpo, timeout=TEMPO_POR_TENTATIVA)
+        except requests.RequestException as e:
+            ultimo = f"falha de rede/tempo ({type(e).__name__})"
+            dormir(min(3 * (tentativa + 1), 15))
+            continue
+        st = resp.status_code
+        if st in (401, 403):
+            raise RuntimeError(f"O OpenRouter recusou a chave ({st}). Confira em Configurações → OpenRouter.")
+        if st == 402:
+            raise RuntimeError("O OpenRouter pediu créditos (402): saldo negativo bloqueia até os modelos grátis.")
+        if st == 404:
+            raise RuntimeError("O OpenRouter não achou esses modelos (404): confira a lista ou deixe em automático.")
+        if st in (408, 429, 500, 502, 503, 504):
+            ultimo = f"ocupado ({st})" + (" — limite diário dos modelos grátis?" if st == 429 else "")
+            try:
+                espera = float(resp.headers.get("Retry-After") or 0)
+            except (TypeError, ValueError, AttributeError):
+                espera = 0
+            dormir(min(espera or 4 * (tentativa + 1), 20))
+            continue
+        try:
+            j = resp.json()
+            if j.get("error"):
+                ultimo = f"erro do provedor ({str(j['error'].get('message', ''))[:120]})"
+                continue
+            r = validar(_ler_json(j["choices"][0]["message"]["content"]), canal)
+            r["modelo"] = j.get("model") or corpo["model"]
+            return r
+        except (RespostaInvalida, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
+            ultimo = f"resposta inválida ({e})"
+            continue
+    raise RuntimeError(f"O OpenRouter não gerou os textos: {ultimo}")
+
+
+def gerar(config, canal: str, fala: str, chat: list, post=requests.post, get=requests.get,
+          dormir=time.sleep) -> dict:
+    """Gemini primeiro; se não houver chave ou ele falhar, o OpenRouter (se configurado).
+    Devolve o resultado com "provedor" ("gemini" ou "openrouter")."""
+    gem, opr = config.get("gemini") or {}, config.get("openrouter") or {}
+    erros = []
+    if gem.get("api_key"):
+        try:
+            return {**analisar_e_escrever(canal, fala, chat, gem["api_key"], gem.get("modelo"), post=post,
+                                          dormir=dormir), "provedor": "gemini"}
+        except Exception as e:  # noqa: BLE001
+            erros.append(str(e))
+    if opr.get("api_key") and opr.get("ativo", True):
+        modelos = [m for m in str(opr.get("modelos") or "").replace("\n", ",").split(",") if m.strip()]
+        try:
+            r = analisar_openrouter(canal, fala, chat, opr["api_key"], modelos, post=post, get=get, dormir=dormir)
+            if erros:
+                log.info("Gemini falhou; textos pelo OpenRouter (%s)", r.get("modelo"))
+            return {**r, "provedor": "openrouter"}
+        except Exception as e:  # noqa: BLE001
+            erros.append(str(e))
+    if not erros:
+        raise SemChave("Sem IA configurada: coloque a chave do Gemini e/ou do OpenRouter em Configurações.")
+    raise RuntimeError(" | ".join(erros))
+
+
+def configurada(config) -> bool:
+    return bool((config.get("gemini") or {}).get("api_key") or
+                ((config.get("openrouter") or {}).get("api_key") and (config.get("openrouter") or {}).get("ativo", True)))

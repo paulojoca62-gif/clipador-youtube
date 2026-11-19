@@ -402,6 +402,19 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
           <button class="btn perigo peq" onclick="desconectar('gemini')">Remover</button>
         </div>
       </div>
+      <div class="card" id="c-openrouter">
+        <h3>🔁 OpenRouter (reserva da IA) <span class="tag" id="st-openrouter"></span></h3>
+        <p class="mini">Se o Gemini falhar (ocupado, fora do ar, modelo indisponível) ou não tiver chave, o OpenRouter escreve os textos. Crie a chave em openrouter.ai → Keys.</p>
+        <label>Chave da API do OpenRouter</label><input id="or-api_key" type="password" placeholder="sk-or-… (deixe vazio para manter)">
+        <label>Modelos (vazio = automático: os grátis do momento)</label><input id="or-modelos" placeholder="ex.: google/gemma-4-31b-it:free, openai/gpt-5-mini">
+        <label class="chave"><input type="checkbox" id="or-ativo"><span class="trilho"></span>Usar como reserva do Gemini</label>
+        <p class="mini">Modelos grátis: 50 pedidos por dia (1.000 se a conta já comprou US$ 10 em créditos) e costumam ficar ocupados. Alguns provedores grátis podem usar os textos para treino; ajuste isso em openrouter.ai → Settings → Privacy.</p>
+        <div class="acoes">
+          <button class="btn sec peq" onclick="salvarConta('openrouter')">💾 Salvar</button>
+          <button class="btn sec peq" onclick="testar('openrouter')">🧪 Testar</button>
+          <button class="btn perigo peq" onclick="desconectar('openrouter')">Remover</button>
+        </div>
+      </div>
       <div class="card" id="c-zernio">
         <h3>🔀 Zernio <span class="tag" id="st-zernio"></span></h3>
         <p class="mini">Publica no TikTok (em público, pelo app aprovado do Zernio) e no Facebook (como Reel) sem app próprio. Crie a conta em zernio.com, conecte lá o TikTok e a Página do Facebook, gere uma chave de API e cole aqui. Depois escolha "Via Zernio" no cartão do TikTok e/ou do Facebook.</p>
@@ -614,6 +627,9 @@ async function carregarConfig(){
   val("tt-client_key", CFG.tiktok.client_key); val("tt-redirect_uri", CFG.tiktok.redirect_uri); val("fb-app_id", CFG.facebook.app_id);
   val("gm-modelo", CFG.gemini.modelo); val("tg-chat_id", CFG.telegram.chat_id); val("tg-avisar_postagem", CFG.telegram.avisar_postagem); val("tg-avisar_erro", CFG.telegram.avisar_erro); val("tg-revisar_pelo_telegram", CFG.telegram.revisar_pelo_telegram !== false); val("tg-enviar_video", CFG.telegram.enviar_video !== false);
   marcar("st-gemini", CFG.gemini.api_key, "chave salva", "sem chave");
+  const opr = CFG.openrouter || {};
+  marcar("st-openrouter", opr.api_key && opr.ativo !== false, "reserva ligada", opr.api_key ? "desligado" : "sem chave");
+  val("or-modelos", opr.modelos || ""); val("or-ativo", opr.ativo !== false);
   const zn = CFG.zernio || {contas:{}, nomes:{}};
   marcar("st-zernio", zn.api_key, "chave salva", "sem chave");
   val("tt-via", CFG.tiktok.via || "direto"); val("fb-via", CFG.facebook.via || "direto");
@@ -736,6 +752,7 @@ async function salvarConta(p){
   const pegar = (pre, campos) => Object.fromEntries(campos.map(c => { const e = $("#" + pre + "-" + c); return [c, e.type === "checkbox" ? e.checked : e.value.trim()]; }));
   const corpo = {youtube: () => pegar("yt", ["client_id","client_secret","privacidade"]), tiktok: () => pegar("tt", ["via","client_key","client_secret","redirect_uri"]),
     facebook: () => pegar("fb", ["via","app_id","app_secret"]), gemini: () => pegar("gm", ["api_key","modelo"]),
+    openrouter: () => pegar("or", ["api_key","modelos","ativo"]),
     telegram: () => pegar("tg", ["bot_token","chat_id","avisar_postagem","avisar_erro","revisar_pelo_telegram","enviar_video"])}[p]();
   await acao(() => api("/api/config/" + p, corpo).then(() => ({msg:"Salvo"})));
   document.querySelectorAll(`#c-${p} input[type=password]`).forEach(i => i.value = "");

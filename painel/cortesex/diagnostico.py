@@ -108,7 +108,8 @@ def coletar(motor) -> dict:
     except Exception as e:  # noqa: BLE001
         banco_ok = f"erro: {type(e).__name__}"
     ia = motor.ia_status
-    gem_estado = "nao_configurado" if not motor.config.get("gemini", "api_key") else (
+    from cortesex import ia as ia_mod
+    gem_estado = "nao_configurado" if not ia_mod.configurada(motor.config) else (
         "nao_validado" if ia.get("ok") is None else ("operacional" if ia["ok"] else "falha"))
     tg = motor.config.get("telegram")
     deps = {

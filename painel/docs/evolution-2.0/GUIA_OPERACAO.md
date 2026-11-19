@@ -50,3 +50,14 @@ Para publicar sem app próprio (o TikTok só deixa app próprio postar em públi
 - Cada envio leva uma Idempotency-Key ligada ao registro do envio: repetir o mesmo envio não duplica.
 - Custo: 2 contas grátis no Zernio; a partir da 3ª, cobrança mensal por conta (ver zernio.com/pricing).
 - A chave fica no cofre (DPAPI). Recomendado ligar "zero content retention" no painel do Zernio.
+
+## IA com reserva: Gemini + OpenRouter
+
+Configurações → Contas → **OpenRouter (reserva da IA)**. O Gemini continua sendo o primeiro; se ele
+falhar (ocupado, fora do ar, modelo indisponível, tempo esgotado) ou não tiver chave, o OpenRouter
+escreve título, legenda, hashtags e análise, com o mesmo prompt protegido e a mesma validação.
+
+- Modelos vazio = automático: os modelos `:free` do momento que respondem em JSON (lista consultada a
+  cada 12 h, sem os modelos minúsculos). O OpenRouter recebe até 3 e pula sozinho para o próximo.
+- Limites dos grátis: 20 pedidos/min e 50/dia (1.000/dia depois de comprar US$ 10 em créditos uma vez).
+- Saldo negativo bloqueia até os grátis (402). Privacidade dos provedores: openrouter.ai → Settings → Privacy.

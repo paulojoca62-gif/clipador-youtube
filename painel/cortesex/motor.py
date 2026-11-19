@@ -211,7 +211,7 @@ class Motor:
                                                                 D.TRANSCRITO, D.MONTANDO, D.MONTADO, D.GERANDO_TEXTOS))
         return {"canais": [c.estado() for c in self.canais.values()], "plataformas": plats,
                 "fila_render": andamento, "estados": estados, "agendador": ag["ativo"], "modo": ag.get("modo"),
-                "gemini": bool(self.config.get("gemini", "api_key")), "disco_baixo": self.disco_baixo,
+                "gemini": ia.configurada(self.config), "disco_baixo": self.disco_baixo,
                 "incertos": len(self.banco.postagens_status("incerto"))}
 
     # ----- detecção → candidato persistente
@@ -402,16 +402,14 @@ class Motor:
                 "score_editorial": p["score"], "confianca": p["confianca"]}
 
     def _etapa_textos(self, c):
-        gem = self.config.get("gemini")
-        detalhe = "sem chave do Gemini: textos ficam para o usuário"
+        detalhe = "sem IA configurada (Gemini/OpenRouter): textos ficam para o usuário"
         if c.get("titulo"):
             detalhe = "textos já existentes mantidos"       # retomada após queda no editor: não sobrescreve
-        elif gem.get("api_key"):
+        elif ia.configurada(self.config):
             try:
-                r = ia.analisar_e_escrever(c["canal"], c.get("fala", ""), c.get("chat", []), gem["api_key"],
-                                           gem.get("modelo"))
+                r = ia.gerar(self.config, c["canal"], c.get("fala", ""), c.get("chat", []))
                 self._aplicar_ia(c, r)
-                detalhe = f"textos da IA: {r['titulo']}"
+                detalhe = f"textos da IA ({r['provedor']}): {r['titulo']}"
                 self.ia_status = {"ok": True, "quando": time.time(), "erro": ""}
                 log.info("[%s] textos da IA: %s", c["canal"], r["titulo"])
             except Exception as e:  # noqa: BLE001
@@ -472,9 +470,7 @@ class Motor:
 
     def regerar_textos(self, corte_id):
         c = self.banco.corte(corte_id)
-        gem = self.config.get("gemini")
-        r = ia.analisar_e_escrever(c["canal"], c.get("fala", ""), c.get("chat", []), gem.get("api_key"),
-                                   gem.get("modelo"))
+        r = ia.gerar(self.config, c["canal"], c.get("fala", ""), c.get("chat", []))
         self._aplicar_ia(c, r)
         self.ia_status = {"ok": True, "quando": time.time(), "erro": ""}
         return {"titulo": r["titulo"], "legenda": r["legenda"], "hashtags": r["hashtags"]}
@@ -757,8 +753,8 @@ class Motor:
                 log.exception("erro ao completar os textos da IA")
 
     def completar_textos(self, maximo=5) -> int:
-        """Tenta de novo o Gemini nos cortes que ficaram sem título (ele estava lento ou ocupado)."""
-        if not self.config.get("gemini", "api_key"):
+        """Tenta de novo a IA nos cortes que ficaram sem título (ela estava lenta ou ocupada)."""
+        if not ia.configurada(self.config):
             return 0
         feitos = 0
         horas = float(self.config.get("agendador", "horas_validade") or 24)
@@ -773,7 +769,7 @@ class Motor:
                 feitos += 1
             except Exception as e:  # noqa: BLE001
                 self.tentativas_ia[c["id"]] = self.tentativas_ia.get(c["id"], 0) + 1
-                log.warning("[%s] o Gemini falhou de novo (%s/3): %s", c["canal"],
+                log.warning("[%s] a IA falhou de novo (%s/3): %s", c["canal"],
                             self.tentativas_ia[c["id"]], seguranca.redigir(e))
         return feitos
 
