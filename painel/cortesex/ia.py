@@ -34,7 +34,8 @@ def gerar_textos(canal: str, fala: str, chat: list, chave: str, modelo: str = "g
     corpo = {"response_format": {"type": "json_object"},
              "messages": [{"role": "user", "content": PROMPT.format(
                  canal=canal, fala=fala or "(sem fala)", chat=" | ".join(chat or []))}]}
-    modelos = [modelo] + [m for m in RESERVA if m != modelo]
+    modelo = (modelo or "").strip() or "gemini-flash-latest"
+    modelos = [modelo] + [m for m in ["gemini-flash-latest"] + RESERVA if m != modelo]
     resp = None
     for tentativa in range(6):   # Gemini ocupado ou lento: espera e tenta outro modelo
         corpo["model"] = modelos[tentativa % len(modelos)]
@@ -42,11 +43,15 @@ def gerar_textos(canal: str, fala: str, chat: list, chave: str, modelo: str = "g
             resp = post(URL, headers={"Authorization": f"Bearer {chave}"}, json=corpo, timeout=45)
         except requests.RequestException:
             resp = None
+        if resp is not None and resp.status_code == 404:
+            continue   # esse modelo não existe para essa chave: tenta o próximo na hora
         if resp is not None and resp.status_code not in (429, 500, 502, 503, 504):
             break
         dormir(3 * (tentativa + 1))
     if resp is None:
         raise RuntimeError("O Gemini não respondeu.")
+    if resp.status_code == 404:
+        raise RuntimeError("Nenhum modelo do Gemini respondeu para essa chave. Escolha outro em Contas → Gemini.")
     if resp.status_code in (400, 401, 403):
         raise RuntimeError(f"O Gemini recusou a chave ou o pedido ({resp.status_code}).")
     resp.raise_for_status()

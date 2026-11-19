@@ -163,3 +163,22 @@ def test_completa_textos_que_faltaram(ambiente, monkeypatch):
     assert m.completar_textos() == 1
     assert m.banco.corte(sem)["titulo"] == "NOVO! 🔥"
     assert m.banco.corte(com)["titulo"] == "TÍTULO"
+
+
+def test_gemini_modelo_inexistente_ou_vazio_usa_outro():
+    class R:
+        def __init__(self, status):
+            self.status_code = status
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"titulo": "OK", "legenda": "", "hashtags": []}'}}]}
+
+        def raise_for_status(self):
+            pass
+    usados = []
+
+    def post(url, headers, json, timeout):
+        usados.append(json["model"])
+        return R(404 if len(usados) == 1 else 200)
+    assert ia.gerar_textos("c", "f", [], "k", "", post=post, dormir=lambda s: None)["titulo"] == "OK"
+    assert usados[0] == "gemini-flash-latest" and usados[1] != usados[0]
