@@ -138,7 +138,8 @@ def postar(cfg: dict, corte: dict) -> dict:
                 "Content-Type": "video/mp4", "Content-Length": str(tamanho),
                 "Content-Range": f"bytes 0-{tamanho - 1}/{tamanho}"})
     except requests.RequestException as e:
-        raise ErroPostagem(f"TikTok: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO) from e
+        raise ErroPostagem(f"TikTok: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO,
+                           incerto=True) from e
     if r.status_code not in (200, 201):
         raise ErroPostagem(f"TikTok: falha no envio do vídeo ({r.status_code})", True, TEMPORARIO, retry_after(r))
     usuario = d.get("creator_username") or cfg.get("usuario") or ""

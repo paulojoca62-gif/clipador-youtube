@@ -66,9 +66,13 @@ def postar(cfg: dict, corte: dict) -> dict:
         raise ErroPostagem(f"Facebook: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO) from e
     if not r.ok or not _json(r).get("success"):
         raise ErroPostagem(f"Facebook: falha no envio do vídeo ({r.status_code})", True, TEMPORARIO)
-    j = _json(requests.post(f"{GRAPH}/{pid}/video_reels", timeout=60, data={
-        "upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED", "access_token": tok,
-        "description": f"{titulo(corte)}\n\n{texto_post(corte)}"}))
+    try:
+        j = _json(requests.post(f"{GRAPH}/{pid}/video_reels", timeout=60, data={
+            "upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED", "access_token": tok,
+            "description": f"{titulo(corte)}\n\n{texto_post(corte)}"}))
+    except requests.RequestException as e:
+        raise ErroPostagem(f"Facebook: a conexão caiu ao publicar ({type(e).__name__})", True, TEMPORARIO,
+                           incerto=True) from e
     if not j.get("success"):
         raise _erro(j)
     return resultado(f"https://www.facebook.com/reel/{vid}", vid, "processando")

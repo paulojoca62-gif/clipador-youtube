@@ -65,6 +65,66 @@ def contexto_ssl() -> ssl.SSLContext:
     return ctx
 
 
+_job = None
+
+
+def _job_windows():
+    """Job Object com KILL_ON_JOB_CLOSE: quando o CortesEX-PRESS morre (até à força), o Windows mata os filhos."""
+    global _job
+    if _job is not None:
+        return _job
+    import ctypes
+    from ctypes import wintypes
+
+    class BASIC(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class IO(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+    class EXT(ctypes.Structure):
+        _fields_ = [("Basic", BASIC), ("Io", IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    job = k32.CreateJobObjectW(None, None)
+    info = EXT()
+    info.Basic.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not job or not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+        raise OSError(ctypes.get_last_error(), "não consegui criar o Job Object")
+    _job = (k32, job)
+    return _job
+
+
+def _morrer_com_o_pai():
+    """Linux: o filho recebe SIGKILL se a thread que o criou (e o programa) morrer."""
+    import ctypes
+    import signal
+    ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+
+
+def popen_vinculado(cmd, **kw) -> subprocess.Popen:
+    """Popen de processo longo (gravação) que não sobrevive ao CortesEX-PRESS, nem se ele for morto à força."""
+    if sys.platform.startswith("linux"):
+        kw.setdefault("preexec_fn", _morrer_com_o_pai)
+    proc = subprocess.Popen(cmd, creationflags=SEM_JANELA, **kw)
+    if sys.platform == "win32":
+        try:
+            k32, job = _job_windows()
+            if not k32.AssignProcessToJobObject(job, int(proc._handle)):
+                raise OSError("AssignProcessToJobObject falhou")
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("cortesex").warning("não consegui vincular o processo filho ao programa: %s", e)
+    return proc
+
+
 def rodar(cmd, timeout=None, **kw) -> subprocess.CompletedProcess:
     """Roda um programa sem abrir janela. Se passar do timeout, mata e devolve código 124."""
     try:

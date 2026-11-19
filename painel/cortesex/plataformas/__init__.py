@@ -22,8 +22,9 @@ EXIGEM_USUARIO = {AUTENTICACAO, PERMISSAO, PRIVACIDADE, CONTA}
 class ErroPostagem(RuntimeError):
     """Falha que vale registrar no log. `tentar_de_novo` diz se um novo envio pode dar certo."""
 
-    def __init__(self, mensagem, tentar_de_novo=True, tipo=None, retry_after=None):
+    def __init__(self, mensagem, tentar_de_novo=True, tipo=None, retry_after=None, incerto=False):
         super().__init__(mensagem)
+        self.incerto = incerto      # o vídeo pode ter sido publicado mesmo assim (resposta perdida)
         self.tentar_de_novo = tentar_de_novo
         self.tipo = tipo or (TEMPORARIO if tentar_de_novo else PERMANENTE)
         self.retry_after = retry_after

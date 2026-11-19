@@ -88,7 +88,8 @@ def postar(cfg: dict, corte: dict) -> dict:
             r2 = requests.put(r.headers["Location"], data=f, headers={"Content-Type": "video/mp4"}, timeout=900)
     except requests.RequestException as e:
         # o envio pode ter chegado: quem chama marca como "incerto", não repete sozinho
-        raise ErroPostagem(f"YouTube: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO) from e
+        raise ErroPostagem(f"YouTube: a conexão caiu durante o envio ({type(e).__name__})", True, TEMPORARIO,
+                           incerto=True) from e
     if r2.status_code not in (200, 201):
         raise _erro(r2)
     j = r2.json()

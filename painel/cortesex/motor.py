@@ -15,6 +15,8 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
+import requests
+
 from cortesex import MAX_CANAIS, editorial, ia, legendas, midia, seguranca, util
 from cortesex import db as D
 from cortesex.config import Config, pasta_dados
@@ -134,6 +136,7 @@ class Motor:
         self.ia_status = {"ok": None, "quando": 0.0, "erro": ""}
         self._lock_post = threading.Lock()
         self._lock_pegar = threading.Lock()
+        self._lock_reserva = threading.Lock()
 
     # ----- ciclo de vida
     def iniciar(self):
@@ -287,12 +290,21 @@ class Motor:
         if not arq["fonte"].exists():
             raise ErroEtapa("a fonte do corte sumiu", definitivo=True)
         G = self.config.get("gravacao")
+        erro_transcricao = ""
         if G.get("legendas") or self.config.get("corte", "adaptativo"):
-            palavras, perfil = self.render.transcrever(arq["fonte"], G.get("modelo_whisper", "small"))
+            try:
+                palavras, perfil = self.render.transcrever(arq["fonte"], G.get("modelo_whisper", "small"))
+            except Exception as e:  # noqa: BLE001
+                # AUD-H2: sem Whisper o corte segue sem legenda e com janela fixa (como na 1.x), marcado
+                erro_transcricao = seguranca.redigir(str(e) or type(e).__name__)
+                log.warning("[%s] corte #%s sem transcrição: %s", c["canal"], c["id"], erro_transcricao)
+                palavras, perfil = [], midia.perfil_audio(midia.ler_audio(arq["fonte"]))
         else:
             palavras, perfil = [], midia.perfil_audio(midia.ler_audio(arq["fonte"]))
-        _gravar_json(arq["palavras"], {"palavras": palavras, "perfil": perfil})
-        self.banco.mudar_estado(c["id"], D.TRANSCRITO, f"{len(palavras)} palavras transcritas")
+        _gravar_json(arq["palavras"], {"palavras": palavras, "perfil": perfil, "erro_transcricao": erro_transcricao})
+        detalhe = f"{len(palavras)} palavras transcritas" if not erro_transcricao else \
+            f"sem transcrição: {erro_transcricao}"
+        self.banco.mudar_estado(c["id"], D.TRANSCRITO, detalhe)
 
     def _limites(self, c, palavras, perfil):
         C, Dt = self.config.get("corte"), self.config.get("deteccao")
@@ -332,6 +344,8 @@ class Motor:
                                   timeout=int(self.config.get("processamento", "timeout_ffmpeg") or 900))
         sinal = editorial.sinais(palavras, perfil, ini, fim, t_pico)
         flags = editorial.avisos(sinal, lim, len(no_corte))
+        if dados.get("erro_transcricao"):
+            flags.append("sem_transcricao")
         fala = " ".join(p[2] for p in no_corte)
         campos = {"corte_ini": ini, "corte_fim": fim, "duracao": round(fim - ini, 1), "fala": fala,
                   "validacao": {**info, "limites": lim, "sinais": sinal}, "flags": flags,
@@ -472,16 +486,18 @@ class Motor:
     # ----- postagem
     def postar(self, corte: dict, plataforma: str, origem="agendador", forcar=False, ignorar_autorizacao=False):
         mod = PLATAFORMAS[plataforma]
-        if not forcar:
-            ja = self.banco.ja_postado(corte["id"], plataforma)
-            if ja:
-                raise ErroPostagem(f"{NOMES[plataforma]}: esse corte já está {ja['status']} nessa rede "
-                                   "(use 'postar de novo' para repetir de propósito)", False, PERMANENTE)
-        if not ignorar_autorizacao:
-            ok, motivo = autorizado_para(self.config.canal(corte["canal"]), plataforma)
-            if not ok:
-                raise ErroPostagem(f"{NOMES[plataforma]}: publicação bloqueada — {motivo}", False, PERMANENTE)
-        pid = self.banco.nova_postagem(corte["id"], plataforma, origem)
+        # AUD-H1: conferir "já postado" e registrar o envio é uma operação só (agendador x botão x clique duplo)
+        with self._lock_reserva:
+            if not forcar:
+                ja = self.banco.ja_postado(corte["id"], plataforma)
+                if ja:
+                    raise ErroPostagem(f"{NOMES[plataforma]}: esse corte já está {ja['status']} nessa rede "
+                                       "(use 'postar de novo' para repetir de propósito)", False, PERMANENTE)
+            if not ignorar_autorizacao:
+                ok, motivo = autorizado_para(self.config.canal(corte["canal"]), plataforma)
+                if not ok:
+                    raise ErroPostagem(f"{NOMES[plataforma]}: publicação bloqueada — {motivo}", False, PERMANENTE)
+            pid = self.banco.nova_postagem(corte["id"], plataforma, origem)
         try:
             if not Path(corte["arquivo"]).exists() or corte.get("arquivo_removido"):
                 raise ErroPostagem("O arquivo do corte não existe mais.", False, MIDIA)
@@ -501,7 +517,11 @@ class Motor:
         except Exception as e:  # noqa: BLE001
             msg = seguranca.redigir(str(e) or type(e).__name__)
             tipo = getattr(e, "tipo", TEMPORARIO if not isinstance(e, ErroPostagem) else PERMANENTE)
-            self.banco.fim_postagem(pid, "erro", erro=msg, tipo_erro=tipo)
+            # AUD-H4: conexão perdida no meio do envio = pode ter publicado; não volta para a fila sozinho
+            incerto = getattr(e, "incerto", False) or isinstance(e, requests.RequestException)
+            self.banco.fim_postagem(pid, "incerto" if incerto else "erro",
+                                    erro=msg + (" — confira na rede se o vídeo foi publicado" if incerto else ""),
+                                    tipo_erro=tipo)
             log.warning("[%s] %s: erro ao postar (%s): %s", corte["canal"], NOMES[plataforma], tipo, msg)
             self._pausar_por_erro(plataforma, e, tipo, msg)
             self.avisar("erro", f"❌ {NOMES[plataforma]}: {msg}\nCorte: {corte.get('titulo') or corte['arquivo']}")

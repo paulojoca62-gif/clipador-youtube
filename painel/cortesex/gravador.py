@@ -146,15 +146,15 @@ class Canal:
         erros = self.dir_seg.parent / f"streamlink_{self.nome}.log"   # arquivo: um pipe cheio travaria
         try:
             with open(erros, "wb") as saida_erro:
-                self._fluxo = subprocess.Popen(
+                self._fluxo = util.popen_vinculado(
                     util.comando_streamlink() + ["--loglevel", "warning", "--twitch-low-latency", "--stdout",
                                                  f"https://www.twitch.tv/{self.nome}", qualidade],
-                    stdout=w, stderr=saida_erro, creationflags=util.SEM_JANELA)
-            self._ff = subprocess.Popen(
+                    stdout=w, stderr=saida_erro)
+            self._ff = util.popen_vinculado(
                 [util.ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
                  "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-f", "segment", "-segment_time", "4",
                  "-reset_timestamps", "1", "-strftime", "1", str(self.dir_seg / f"{FORMATO_BLOCO}.ts")],
-                stdin=r, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=util.SEM_JANELA)
+                stdin=r, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         finally:
             os.close(r)
             os.close(w)
