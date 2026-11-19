@@ -128,16 +128,21 @@ def analisar_e_escrever(canal: str, fala: str, chat: list, chave: str, modelo: s
     modelo = (modelo or "").strip() or PADRAO
     modelos = [modelo] + [m for m in [PADRAO] + RESERVA if m != modelo]
     ultimo_erro = "O Gemini não respondeu."
+    erros: dict[str, str] = {}          # o último erro de cada modelo (vai inteiro na mensagem final)
+    sem_acesso: set[str] = set()        # 404: a chave não tem esse modelo; não adianta tentar de novo
     inicio = relogio()
     for tentativa in range(MAX_TENTATIVAS):
         if relogio() - inicio > ORCAMENTO_TOTAL:
             ultimo_erro += f" (tempo máximo de {ORCAMENTO_TOTAL} s atingido)"
             break
-        corpo["model"] = modelos[tentativa % len(modelos)]
+        disponiveis = [m for m in modelos if m not in sem_acesso]
+        if not disponiveis:
+            break
+        corpo["model"] = disponiveis[tentativa % len(disponiveis)]
         try:
             resp = post(URL, headers={"Authorization": f"Bearer {chave}"}, json=corpo, timeout=TEMPO_POR_TENTATIVA)
         except requests.RequestException as e:
-            ultimo_erro = f"falha de rede/tempo ({type(e).__name__})"
+            ultimo_erro = erros[corpo["model"]] = f"falha de rede/tempo ({type(e).__name__})"
             dormir(min(3 * (tentativa + 1), 20))
             continue
         st = resp.status_code
@@ -146,10 +151,11 @@ def analisar_e_escrever(canal: str, fala: str, chat: list, chave: str, modelo: s
         if st == 400:
             raise RuntimeError("O Gemini recusou o pedido (400).")
         if st == 404:
-            ultimo_erro = f"modelo {corpo['model']} indisponível para essa chave"
+            ultimo_erro = erros[corpo["model"]] = "indisponível para essa chave"
+            sem_acesso.add(corpo["model"])
             continue
         if st in (429, 500, 502, 503, 504):
-            ultimo_erro = f"Gemini ocupado ({st})"
+            ultimo_erro = erros[corpo["model"]] = f"ocupado ({st})"
             try:
                 espera = float(resp.headers.get("Retry-After") or 0)
             except (TypeError, ValueError, AttributeError):
@@ -160,8 +166,11 @@ def analisar_e_escrever(canal: str, fala: str, chat: list, chave: str, modelo: s
             conteudo = resp.json()["choices"][0]["message"]["content"]
             return validar(_ler_json(conteudo), canal)
         except (RespostaInvalida, ValueError, KeyError, IndexError, TypeError) as e:
-            ultimo_erro = f"resposta inválida ({e})"
+            ultimo_erro = erros[corpo["model"]] = f"resposta inválida ({e})"
             continue
+    if erros:
+        ultimo_erro = "; ".join(f"{m}: {e}" for m, e in erros.items()) + \
+            (" (tempo máximo atingido)" if "tempo máximo" in ultimo_erro else "")
     raise RuntimeError(f"O Gemini não gerou os textos: {ultimo_erro}")
 
 

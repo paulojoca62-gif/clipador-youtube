@@ -71,7 +71,7 @@ jobs:
             --collect-all av --collect-all tokenizers `
             --collect-all streamlink --collect-all streamlink_cli `
             --collect-submodules websocket --collect-data certifi `
-            --hidden-import cortesex.app --hidden-import cortesex._build
+            --hidden-import cortesex.app --hidden-import cortesex._build --hidden-import truststore
 
       - name: Testar o executável
         run: |

@@ -4,6 +4,7 @@ import json
 import multiprocessing as mp
 import os
 import shutil
+import sys
 import socket
 import subprocess
 import time
@@ -432,3 +433,62 @@ def test_backup_da_atualizacao_so_o_dono_le(tmp_path):
     assert destino and (destino.stat().st_mode & 0o777) == 0o700
     assert all((f.stat().st_mode & 0o777) == 0o600 for f in destino.iterdir())
     assert (destino / "segredos.dat").exists()
+
+
+# ================================================================ rodada pós-uso (logs do usuário)
+def test_gemini_pula_modelo_sem_acesso_e_explica_cada_um():
+    tentados = []
+
+    class R:
+        def __init__(self, st, js=None):
+            self.status_code, self._js, self.headers = st, js, {}
+
+        def json(self):
+            return self._js
+
+    def post(url, json=None, **k):
+        tentados.append(json["model"])
+        return R(404) if json["model"] == "gemini-2.5-flash" else R(503)
+    with pytest.raises(RuntimeError) as e:
+        ia.analisar_e_escrever("c", "f", [], "k", modelo="gemini-2.5-flash", post=post, dormir=lambda s: None)
+    assert tentados.count("gemini-2.5-flash") == 1                      # 404 não é tentado de novo
+    msg = str(e.value)
+    assert "gemini-2.5-flash: indisponível para essa chave" in msg and "gemini-flash-latest: ocupado (503)" in msg
+
+    def post_ok(url, json=None, **k):
+        if json["model"] == "gemini-2.5-flash":
+            return R(404)
+        return R(200, {"choices": [{"message": {"content": '{"titulo": "OK"}'}}]})
+    assert ia.analisar_e_escrever("c", "f", [], "k", modelo="gemini-2.5-flash", post=post_ok,
+                                  dormir=lambda s: None)["titulo"] == "OK"
+
+
+def test_https_usa_os_certificados_do_sistema(monkeypatch):
+    from cortesex import app
+    chamado = []
+    monkeypatch.setitem(sys.modules, "truststore", type("T", (), {"inject_into_ssl": lambda: chamado.append(1)}))
+    app.usar_certificados_do_sistema()
+    assert chamado == [1]
+
+    def quebra():
+        raise RuntimeError("sem loja")
+    monkeypatch.setitem(sys.modules, "truststore", type("T", (), {"inject_into_ssl": quebra}))
+    app.usar_certificados_do_sistema()                                     # não derruba o programa
+
+
+def test_navegador_fechando_o_video_nao_vira_erro(painel, monkeypatch):
+    porta, p, m, pasta = painel
+    arq = pasta / "v.mp4"
+    arq.write_bytes(b"x" * 5000)
+    cid = m.banco.novo_corte("a", arq, time.time(), 1, 1, "p", [], "", "t")
+    from cortesex import servidor
+    erros = []
+    monkeypatch.setattr(servidor.log, "exception", lambda *a, **k: erros.append(a))
+    import socketserver
+    monkeypatch.setattr(socketserver._SocketWriter, "write",
+                        lambda self, b: (_ for _ in ()).throw(ConnectionAbortedError(10053, "anulada")))
+    try:
+        pedir(porta, "GET", f"/video/{cid}")
+    except Exception:  # noqa: BLE001
+        pass
+    assert erros == []

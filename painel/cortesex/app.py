@@ -40,6 +40,20 @@ def configurar_log():
         raiz.addHandler(tela)
 
 
+def usar_certificados_do_sistema():
+    """HTTPS verificado pela loja de certificados do Windows (não só pela lista do certifi).
+
+    Antivírus com inspeção de HTTPS e proxies corporativos trocam o certificado dos sites pelo deles;
+    o Windows confia nessa autoridade, o certifi não ("self-signed certificate in certificate chain").
+    Continua verificando tudo: só passa a aceitar o que o próprio Windows aceita.
+    """
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("cortesex").warning("certificados do sistema indisponíveis (%s); usando o certifi", e)
+
+
 def main(abrir_navegador: bool = True):
     url = f"http://127.0.0.1:{PORTA}/"
     if ja_aberto(PORTA):
@@ -47,6 +61,7 @@ def main(abrir_navegador: bool = True):
             webbrowser.open(url)
         return
     configurar_log()
+    usar_certificados_do_sistema()
     copia = backup_se_mudou(pasta_dados())
     if copia:
         logging.getLogger("cortesex").info("versão nova: backup da configuração e do banco em %s", copia.name)

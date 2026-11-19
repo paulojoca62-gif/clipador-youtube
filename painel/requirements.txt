@@ -2,5 +2,6 @@ streamlink>=8.0
 websocket-client>=1.8
 requests>=2.32
 certifi
+truststore>=0.10
 faster-whisper>=1.1
 numpy

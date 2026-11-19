@@ -415,6 +415,8 @@ class Painel:
                     return self._json({"erro": "não encontrado"}, 404)
                 except KeyError:
                     return self._json({"erro": "não encontrado"}, 404)
+                except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                    return        # o navegador pulou o vídeo ou fechou o player: não é erro
                 except Exception as e:  # noqa: BLE001
                     log.exception("erro na API")
                     return self._json({"erro": seguranca.redigir(e)}, 500)
