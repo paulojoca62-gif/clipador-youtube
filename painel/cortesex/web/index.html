@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CortesEX-PRESS</title>
+<style>
+:root{
+  --bg:#07060d;--card:rgba(22,20,38,.72);--card2:rgba(34,30,58,.75);--borda:rgba(255,255,255,.09);
+  --txt:#f1efff;--sub:#a8a3c7;--roxo:#9146ff;--rosa:#ff3d8b;--ciano:#20e3ff;--verde:#3ef0a0;--amarelo:#ffd23f;--vermelho:#ff5470;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,sans-serif}
+body{overflow-x:hidden}
+/* fundo animado */
+.fundo{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;background:radial-gradient(ellipse at top,#1a0f3a 0%,#07060d 60%)}
+.bolha{position:absolute;border-radius:50%;filter:blur(80px);opacity:.42;animation:flutuar 18s ease-in-out infinite}
+.b1{width:520px;height:520px;background:var(--roxo);top:-120px;left:-120px}
+.b2{width:460px;height:460px;background:var(--rosa);bottom:-160px;right:-80px;animation-delay:-6s}
+.b3{width:380px;height:380px;background:var(--ciano);top:40%;left:55%;opacity:.3;animation-delay:-12s}
+@keyframes flutuar{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(80px,60px) scale(1.15)}66%{transform:translate(-60px,40px) scale(.9)}}
+.grade{position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(ellipse at center,#000 30%,transparent 75%)}
+/* topo */
+header,main,#toast{position:relative;z-index:1}
+header{padding:28px 20px 8px;text-align:center}
+#sair{position:absolute;top:14px;right:14px}
+@media (max-width:640px){#sair{position:static;margin-bottom:10px}}
+.logo{display:inline-flex;align-items:center;gap:14px}
+.tesoura{font-size:44px;display:inline-block;animation:cortar 2.4s ease-in-out infinite;filter:drop-shadow(0 0 14px rgba(255,61,139,.7))}
+@keyframes cortar{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(18deg) scale(1.1)}}
+h1{margin:0;font-size:clamp(30px,6vw,56px);font-weight:900;letter-spacing:-1px;
+  background:linear-gradient(90deg,var(--ciano),var(--roxo),var(--rosa),var(--amarelo),var(--ciano));background-size:300% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;animation:brilho 6s linear infinite}
+@keyframes brilho{to{background-position:300% 0}}
+.slogan{color:var(--sub);margin:6px 0 0;font-size:15px;letter-spacing:.5px}
+.ponto{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--verde);box-shadow:0 0 0 0 rgba(62,240,160,.7);animation:pulso 1.6s infinite;margin-right:6px;vertical-align:middle}
+.ponto.off{background:#6b6790;animation:none}
+@keyframes pulso{70%{box-shadow:0 0 0 10px rgba(62,240,160,0)}100%{box-shadow:0 0 0 0 rgba(62,240,160,0)}}
+/* abas */
+nav{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin:18px auto 0;padding:6px;max-width:860px;background:rgba(255,255,255,.04);border:1px solid var(--borda);border-radius:16px;backdrop-filter:blur(10px)}
+nav button{flex:1 1 auto;min-width:96px;background:none;border:0;color:var(--sub);padding:10px 14px;border-radius:11px;font:600 14px inherit;font-family:inherit;cursor:pointer;transition:.25s}
+nav button:hover{color:var(--txt);background:rgba(255,255,255,.05)}
+nav button.ativa{color:#fff;background:linear-gradient(135deg,var(--roxo),var(--rosa));box-shadow:0 6px 22px -6px rgba(255,61,139,.6)}
+main{max-width:1100px;margin:0 auto;padding:22px 16px 60px}
+.aba{display:none;animation:entrar .45s cubic-bezier(.2,.8,.2,1)}
+.aba.ativa{display:block}
+@keyframes entrar{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+/* cartões */
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+.card{background:var(--card);border:1px solid var(--borda);border-radius:18px;padding:18px;backdrop-filter:blur(14px);transition:transform .25s,border-color .25s}
+.card:hover{border-color:rgba(145,70,255,.45)}
+.card h3{margin:0 0 10px;font-size:16px;display:flex;align-items:center;gap:8px}
+.card p{color:var(--sub);font-size:13.5px;line-height:1.5;margin:6px 0}
+.num{font-size:34px;font-weight:800;margin:4px 0}
+.tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700;background:rgba(255,255,255,.07);color:var(--sub)}
+.tag.ok{background:rgba(62,240,160,.14);color:var(--verde)}
+.tag.erro{background:rgba(255,84,112,.15);color:var(--vermelho)}
+.tag.warn{background:rgba(255,210,63,.14);color:var(--amarelo)}
+.tag.live{background:rgba(255,61,139,.18);color:#ff8fbd}
+h2{font-size:22px;margin:4px 0 14px}
+.sub{color:var(--sub);font-size:14px;margin:-8px 0 16px}
+/* formulários */
+label{display:block;font-size:13px;color:var(--sub);margin:12px 0 5px;font-weight:600}
+input,select,textarea{width:100%;background:rgba(0,0,0,.35);border:1px solid var(--borda);color:var(--txt);border-radius:11px;padding:10px 12px;font:14px inherit;font-family:inherit;outline:none;transition:.2s}
+input:focus,select:focus,textarea:focus{border-color:var(--roxo);box-shadow:0 0 0 3px rgba(145,70,255,.25)}
+textarea{min-height:80px;resize:vertical}
+.linha{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}.linha>*{flex:1 1 140px}
+.btn{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:11px;padding:10px 16px;font:700 14px inherit;font-family:inherit;cursor:pointer;color:#fff;background:linear-gradient(135deg,var(--roxo),var(--rosa));transition:transform .15s,box-shadow .2s;box-shadow:0 6px 20px -8px rgba(145,70,255,.8)}
+.btn:hover{transform:translateY(-2px)}.btn:active{transform:none}
+.btn.sec{background:rgba(255,255,255,.08);box-shadow:none}
+.btn.peq{padding:7px 11px;font-size:13px}
+.btn.perigo{background:rgba(255,84,112,.18);color:#ff8fa2;box-shadow:none}
+.btn[disabled]{opacity:.5;pointer-events:none}
+.acoes{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.chave{display:flex;align-items:center;gap:10px;cursor:pointer;margin:10px 0;color:var(--txt);font-size:14px;font-weight:600}
+.chave input{display:none}
+.trilho{width:42px;height:24px;border-radius:999px;background:rgba(255,255,255,.12);position:relative;transition:.25s;flex:none}
+.trilho:after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.25s}
+.chave input:checked+.trilho{background:linear-gradient(135deg,var(--roxo),var(--rosa))}
+.chave input:checked+.trilho:after{left:21px}
+details{margin-top:10px}summary{cursor:pointer;color:var(--ciano);font-size:13.5px;font-weight:600}
+details ol{color:var(--sub);font-size:13.5px;line-height:1.6;padding-left:20px}
+code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-size:12.5px;word-break:break-all}
+/* ranking */
+.corte{display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:start}
+.corte video{width:150px;aspect-ratio:9/16;border-radius:12px;background:#000;object-fit:cover}
+.pos{font-size:13px;font-weight:900;background:linear-gradient(135deg,var(--amarelo),var(--rosa));color:#1a0f2e;border-radius:9px;padding:3px 9px;margin-right:8px}
+.medalha-1{box-shadow:0 0 0 2px var(--amarelo),0 10px 40px -10px rgba(255,210,63,.6)}
+.barra{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin:8px 0}
+.barra i{display:block;height:100%;background:linear-gradient(90deg,var(--ciano),var(--roxo),var(--rosa));border-radius:99px;transition:width 1s}
+.hashtags{color:var(--ciano);font-size:13px}
+.pl{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+@media (max-width:560px){.corte{grid-template-columns:1fr}.corte video{width:100%;max-width:240px}}
+/* tabela log */
+.tabela{width:100%;border-collapse:collapse;font-size:13.5px}
+.tabela th{color:var(--sub);text-align:left;font-weight:600;padding:8px;border-bottom:1px solid var(--borda)}
+.tabela td{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:top}
+.tabela a{color:var(--ciano)}
+.rolagem{overflow-x:auto}
+.eventos{font-family:Consolas,monospace;font-size:12.5px;max-height:320px;overflow:auto;color:var(--sub);line-height:1.55}
+.eventos .warning,.eventos .error{color:#ff8fa2}
+/* canais */
+.canal-item{display:grid;grid-template-columns:30px 1fr 150px auto auto;gap:10px;align-items:center;margin-bottom:10px}
+.canal-item .n{font-weight:900;color:var(--sub);text-align:center}
+@media (max-width:640px){.canal-item{grid-template-columns:24px 1fr auto;}.canal-item select{grid-column:2/4}}
+/* aviso flutuante */
+#toast{position:fixed !important;left:50%;bottom:26px;transform:translate(-50%,120px);background:var(--card2);border:1px solid var(--borda);padding:12px 18px;border-radius:14px;backdrop-filter:blur(14px);transition:transform .35s cubic-bezier(.2,.9,.3,1.3);z-index:9;max-width:92vw;font-size:14px}
+#toast.on{transform:translate(-50%,0)}#toast.erro{border-color:var(--vermelho)}#toast.ok{border-color:var(--verde)}
+.vazio{text-align:center;color:var(--sub);padding:40px 10px}
+.vazio .icone{font-size:44px;display:block;margin-bottom:10px;animation:cortar 3s ease-in-out infinite}
+.dias{display:flex;gap:6px;flex-wrap:wrap}
+.dias label{margin:0;display:flex;align-items:center;gap:5px;background:rgba(255,255,255,.05);padding:6px 10px;border-radius:9px;cursor:pointer;color:var(--txt)}
+.dias input{width:auto}
+.prev{font-size:15px;font-weight:700;background:linear-gradient(90deg,var(--ciano),var(--rosa));-webkit-background-clip:text;background-clip:text;color:transparent}
+</style>
+</head>
+<body>
+<div class="fundo"><div class="bolha b1"></div><div class="bolha b2"></div><div class="bolha b3"></div></div>
+<div class="grade"></div>
+
+<header>
+  <div class="logo"><span class="tesoura">✂️</span><h1>CortesEX-PRESS</h1></div>
+  <p class="slogan"><span class="ponto" id="ponto"></span><span id="status-topo">carregando…</span></p>
+  <nav id="abas">
+    <button data-aba="painel" class="ativa">🏠 Painel</button>
+    <button data-aba="ranking">🏆 Ranking</button>
+    <button data-aba="agendador">⏰ Agendador</button>
+    <button data-aba="canais">📺 Canais</button>
+    <button data-aba="contas">🔐 Contas</button>
+    <button data-aba="log">📜 Log</button>
+  </nav>
+  <button class="btn sec peq" id="sair" onclick="encerrar()" title="Para de gravar e fecha o CortesEX-PRESS">⏻ Encerrar</button>
+</header>
+
+<main>
+<!-- PAINEL -->
+<section class="aba ativa" id="aba-painel">
+  <div class="grid" id="resumo"></div>
+  <h2 style="margin-top:26px">Canais vigiados</h2>
+  <div class="grid" id="lista-canais-status"></div>
+  <h2 style="margin-top:26px">Destinos</h2>
+  <div class="grid" id="destinos"></div>
+</section>
+
+<!-- RANKING -->
+<section class="aba" id="aba-ranking">
+  <h2>🏆 Melhores cortes</h2>
+  <p class="sub">Ordenados pelo pico do chat. O agendador posta do topo para baixo, já com o título, a legenda e as hashtags do Gemini.</p>
+  <div class="linha" style="margin-bottom:14px">
+    <div><label>Período</label><select id="rk-horas"><option value="6">Últimas 6 horas</option><option value="24" selected>Últimas 24 horas</option><option value="72">Últimos 3 dias</option><option value="0">Tudo</option></select></div>
+    <div style="flex:0 0 auto"><button class="btn sec" onclick="carregarRanking()">↻ Atualizar</button></div>
+  </div>
+  <div id="lista-ranking"></div>
+</section>
+
+<!-- AGENDADOR -->
+<section class="aba" id="aba-agendador">
+  <div class="card">
+    <h2>⏰ Agendador de postagens</h2>
+    <label class="chave"><input type="checkbox" id="ag-ativo"><span class="trilho"></span>Postar automaticamente</label>
+    <div class="linha">
+      <div><label>Quantos vídeos</label><input type="number" id="ag-quantidade" min="1" max="60" value="1"></div>
+      <div><label>Por</label><select id="ag-periodo"><option value="hora">hora</option><option value="dia">dia</option></select></div>
+      <div><label>Pico mínimo do chat (nota)</label><input type="number" id="ag-score" step="0.1" min="0" value="2.5"></div>
+      <div><label>Só cortes das últimas (horas)</label><input type="number" id="ag-validade" min="1" value="24"></div>
+    </div>
+    <p class="prev" id="ag-resumo"></p>
+    <div class="linha">
+      <div><label>Postar a partir de (hora)</label><input type="number" id="ag-inicio" min="0" max="23" value="0"></div>
+      <div><label>Até (hora)</label><input type="number" id="ag-fim" min="1" max="24" value="24"></div>
+    </div>
+    <label>Dias da semana</label>
+    <div class="dias" id="ag-dias"></div>
+    <label>Onde postar</label>
+    <label class="chave"><input type="checkbox" id="ag-youtube"><span class="trilho"></span>▶️ YouTube Shorts</label>
+    <label class="chave"><input type="checkbox" id="ag-tiktok"><span class="trilho"></span>🎵 TikTok</label>
+    <label class="chave"><input type="checkbox" id="ag-facebook"><span class="trilho"></span>📘 Página do Facebook (Reels)</label>
+    <label class="chave"><input type="checkbox" id="ag-ia"><span class="trilho"></span>🤖 Só postar cortes que já têm os textos do Gemini</label>
+    <div class="acoes"><button class="btn" onclick="salvarAgendador()">💾 Salvar agendador</button></div>
+    <p>Os vídeos saem espalhados no período: com 5 por hora, um a cada 12 minutos. Se o YouTube, o TikTok ou o Facebook avisarem que o limite do dia acabou, aquela plataforma pausa por 1 hora e tenta de novo.</p>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>✂️ Detecção dos picos</h3>
+    <div class="linha">
+      <div><label>Sensibilidade (X vezes acima do normal)</label><input type="number" id="dt-mult" step="0.1" min="1.2" value="2.5"></div>
+      <div><label>Segundos antes do pico</label><input type="number" id="dt-antes" min="5" max="120" value="40"></div>
+      <div><label>Segundos depois do pico</label><input type="number" id="dt-depois" min="0" max="60" value="15"></div>
+      <div><label>Intervalo mínimo entre cortes (s)</label><input type="number" id="dt-cooldown" min="10" value="75"></div>
+    </div>
+    <div class="linha">
+      <div><label>Qualidade gravada</label><input id="gr-qualidade" value="720p60,720p,best"></div>
+      <div><label>Modelo da legenda (Whisper)</label><select id="gr-whisper"><option value="base">base (rápido)</option><option value="small">small (melhor em português)</option></select></div>
+      <div><label>Guardar cortes por (dias)</label><input type="number" id="gr-dias" min="1" value="7"></div>
+    </div>
+    <label class="chave"><input type="checkbox" id="gr-legendas"><span class="trilho"></span>Legenda escrita no vídeo</label>
+    <div class="acoes"><button class="btn" onclick="salvarDeteccao()">💾 Salvar</button></div>
+  </div>
+</section>
+
+<!-- CANAIS -->
+<section class="aba" id="aba-canais">
+  <div class="card">
+    <h2>📺 Canais da Twitch para vigiar</h2>
+    <p class="sub" style="margin-top:0">Até <b id="max-canais">5</b> canais. Corte e poste só lives de quem autorizou.</p>
+    <div id="form-canais"></div>
+    <div class="acoes">
+      <button class="btn sec" id="add-canal" onclick="addCanal()">＋ Adicionar canal</button>
+      <button class="btn" onclick="salvarCanais()">💾 Salvar canais</button>
+    </div>
+    <p><b>Layout:</b> "Fundo desfocado" põe a tela inteira no meio do vídeo vertical. "Câmera em cima" corta a webcam e coloca em cima do jogo; use se a câmera do streamer fica num canto fixo.</p>
+  </div>
+</section>
+
+<!-- CONTAS -->
+<section class="aba" id="aba-contas">
+  <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+    <div class="card" id="c-youtube">
+      <h3>▶️ YouTube <span class="tag" id="st-youtube"></span></h3>
+      <label>ID do cliente OAuth</label><input id="yt-client_id" placeholder="xxxx.apps.googleusercontent.com">
+      <label>Chave secreta do cliente</label><input id="yt-client_secret" type="password" placeholder="deixe vazio para manter">
+      <div class="linha">
+        <div><label>Privacidade</label><select id="yt-privacidade"><option value="public">Público</option><option value="unlisted">Não listado</option><option value="private">Privado</option></select></div>
+      </div>
+      <div class="acoes">
+        <button class="btn sec peq" onclick="salvarConta('youtube')">💾 Salvar</button>
+        <button class="btn peq" onclick="conectar('youtube')">🔗 Conectar canal</button>
+        <button class="btn sec peq" onclick="testar('youtube')">🧪 Testar</button>
+        <button class="btn perigo peq" onclick="desconectar('youtube')">Desconectar</button>
+      </div>
+      <details><summary>Como configurar</summary><ol>
+        <li>No <a href="https://console.cloud.google.com" target="_blank" style="color:var(--ciano)">Google Cloud</a>, ative a <b>YouTube Data API v3</b>.</li>
+        <li>Em Credenciais, crie um <b>ID do cliente OAuth</b> do tipo <b>App para computador</b> (ou Aplicativo da Web com o URI <code class="redir"></code>).</li>
+        <li>Na tela de consentimento, adicione o seu e-mail em <b>Usuários de teste</b>.</li>
+        <li>Cole o ID e a chave aqui, salve e clique em <b>Conectar canal</b>.</li>
+        <li>Sem a auditoria da API do Google, o YouTube pode travar os vídeos como privados.</li>
+      </ol></details>
+    </div>
+
+    <div class="card" id="c-tiktok">
+      <h3>🎵 TikTok <span class="tag" id="st-tiktok"></span></h3>
+      <label>Client key</label><input id="tt-client_key">
+      <label>Client secret</label><input id="tt-client_secret" type="password" placeholder="deixe vazio para manter">
+      <label>URL de retorno cadastrada no app (Redirect URI)</label><input id="tt-redirect_uri" placeholder="padrão: endereço deste painel">
+      <div class="acoes">
+        <button class="btn sec peq" onclick="salvarConta('tiktok')">💾 Salvar</button>
+        <button class="btn peq" onclick="conectar('tiktok')">🔗 Conectar conta</button>
+        <button class="btn sec peq" onclick="testar('tiktok')">🧪 Testar</button>
+        <button class="btn perigo peq" onclick="desconectar('tiktok')">Desconectar</button>
+      </div>
+      <label>Se o TikTok te mandar para outro endereço, cole o endereço inteiro aqui</label>
+      <div class="linha"><input id="tt-retorno" placeholder="https://...?code=..."><button class="btn sec peq" style="flex:0 0 auto" onclick="colarCodigo('tiktok')">Concluir</button></div>
+      <details><summary>Como configurar</summary><ol>
+        <li>Crie um app em <a href="https://developers.tiktok.com" target="_blank" style="color:var(--ciano)">developers.tiktok.com</a> com <b>Login Kit</b> e <b>Content Posting API</b> (Direct Post ligado).</li>
+        <li>Cadastre a Redirect URI (a mesma do campo acima).</li>
+        <li>Sem a auditoria do TikTok, os vídeos saem <b>privados</b> e a conta precisa estar <b>privada</b>.</li>
+      </ol></details>
+    </div>
+
+    <div class="card" id="c-facebook">
+      <h3>📘 Página do Facebook <span class="tag" id="st-facebook"></span></h3>
+      <label>App ID</label><input id="fb-app_id">
+      <label>App secret</label><input id="fb-app_secret" type="password" placeholder="deixe vazio para manter">
+      <label>Token de usuário (do Explorador da Graph API)</label><input id="fb-token" type="password" placeholder="EAAG...">
+      <div class="acoes">
+        <button class="btn sec peq" onclick="salvarConta('facebook')">💾 Salvar</button>
+        <button class="btn peq" onclick="buscarPaginas()">📄 Buscar minhas Páginas</button>
+        <button class="btn sec peq" onclick="testar('facebook')">🧪 Testar</button>
+        <button class="btn perigo peq" onclick="desconectar('facebook')">Desconectar</button>
+      </div>
+      <div id="fb-paginas"></div>
+      <details><summary>Como configurar</summary><ol>
+        <li>Crie um app do tipo <b>Empresa</b> em <a href="https://developers.facebook.com" target="_blank" style="color:var(--ciano)">developers.facebook.com</a>.</li>
+        <li>No <b>Explorador da Graph API</b>, gere um token de usuário com <code>pages_show_list</code>, <code>pages_read_engagement</code> e <code>pages_manage_posts</code>.</li>
+        <li>Cole aqui com o App ID e o App secret e clique em <b>Buscar minhas Páginas</b>. O token da Página escolhida não vence.</li>
+      </ol></details>
+    </div>
+
+    <div class="card" id="c-gemini">
+      <h3>🤖 Gemini (títulos e legendas) <span class="tag" id="st-gemini"></span></h3>
+      <label>Chave da API do Gemini</label><input id="gm-api_key" type="password" placeholder="AIza… (deixe vazio para manter)">
+      <label>Modelo</label><select id="gm-modelo"><option value="gemini-flash-latest">Gemini Flash (recomendado)</option><option value="gemini-flash-lite-latest">Gemini Flash Lite (mais rápido)</option><option value="gemini-2.5-flash">Gemini 2.5 Flash</option></select>
+      <div class="acoes">
+        <button class="btn sec peq" onclick="salvarConta('gemini')">💾 Salvar</button>
+        <button class="btn sec peq" onclick="testar('gemini')">🧪 Testar</button>
+        <button class="btn perigo peq" onclick="desconectar('gemini')">Remover</button>
+      </div>
+      <p>Chave grátis em <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--ciano)">aistudio.google.com/apikey</a>.</p>
+    </div>
+
+    <div class="card" id="c-telegram">
+      <h3>✈️ Avisos no Telegram <span class="tag" id="st-telegram"></span></h3>
+      <label>Token do bot (do @BotFather)</label><input id="tg-bot_token" type="password" placeholder="123456:ABC… (deixe vazio para manter)">
+      <label>Chat ID</label><input id="tg-chat_id" placeholder="clique em Descobrir depois de mandar um oi ao bot">
+      <label class="chave"><input type="checkbox" id="tg-avisar_postagem"><span class="trilho"></span>Avisar cada vídeo postado</label>
+      <label class="chave"><input type="checkbox" id="tg-avisar_erro"><span class="trilho"></span>Avisar erros</label>
+      <div class="acoes">
+        <button class="btn sec peq" onclick="salvarConta('telegram')">💾 Salvar</button>
+        <button class="btn sec peq" onclick="descobrirChat()">🔎 Descobrir chat</button>
+        <button class="btn sec peq" onclick="testar('telegram')">🧪 Testar</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- LOG -->
+<section class="aba" id="aba-log">
+  <div class="card">
+    <h2>📜 Clipes postados</h2>
+    <div class="rolagem"><table class="tabela"><thead><tr><th>Quando</th><th>Onde</th><th>Corte</th><th>Nota</th><th>Situação</th></tr></thead><tbody id="log-post"></tbody></table></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>🛠️ Atividade do sistema</h3>
+    <div class="eventos" id="eventos"></div>
+  </div>
+</section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const NOMES = {youtube:"▶️ YouTube", tiktok:"🎵 TikTok", facebook:"📘 Facebook"};
+const DIAS = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
+let CFG = {}, EST = {};
+
+async function api(caminho, corpo){
+  const op = corpo === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json","X-CortesEX":"1"}, body:JSON.stringify(corpo)};
+  const r = await fetch(caminho, op);
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.erro || ("Erro " + r.status));
+  return j;
+}
+function toast(msg, tipo="ok"){
+  const t = $("#toast"); t.textContent = msg; t.className = "on " + tipo;
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = tipo, 4200);
+}
+async function acao(fn, btn){
+  if(btn) btn.disabled = true;
+  try{ const r = await fn(); if(r && r.msg) toast(r.msg); return r; }
+  catch(e){ toast(e.message, "erro"); }
+  finally{ if(btn) btn.disabled = false; }
+}
+const quando = t => t ? new Date(t*1000).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "—";
+
+/* abas */
+function abrir(nome){
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("ativa", b.dataset.aba === nome));
+  document.querySelectorAll(".aba").forEach(a => a.classList.toggle("ativa", a.id === "aba-" + nome));
+  if(nome === "ranking") carregarRanking();
+  if(nome === "log") carregarLog();
+}
+$("#abas").addEventListener("click", e => { const b = e.target.closest("button"); if(b){ location.hash = b.dataset.aba; } });
+window.addEventListener("hashchange", lerHash);
+function lerHash(){
+  const [nome, qs] = location.hash.slice(1).split("?");
+  abrir(nome || "painel");
+  if(qs){ const p = new URLSearchParams(qs); if(p.get("ok")) toast(p.get("ok")); if(p.get("erro")) toast(p.get("erro"), "erro");
+    history.replaceState(null, "", "#" + nome); carregarConfig(); }
+}
+
+/* estado */
+async function carregarEstado(){
+  try{ EST = await api("/api/estado"); }catch(e){ $("#status-topo").textContent = "painel desconectado"; $("#ponto").className = "ponto off"; return; }
+  const aoVivo = EST.canais.filter(c => c.ao_vivo).length;
+  $("#ponto").className = "ponto" + (aoVivo ? "" : " off");
+  $("#status-topo").textContent = `${EST.canais.length} canal(is) vigiado(s) · ${aoVivo} ao vivo · agendador ${EST.agendador ? "ligado" : "desligado"}`;
+  $("#max-canais").textContent = EST.max_canais;
+  document.querySelectorAll(".redir").forEach(e => e.textContent = EST.redirect);
+  const ligadas = Object.entries(EST.plataformas).filter(([,p]) => p.ligado && p.conectado).length;
+  $("#resumo").innerHTML = `
+    <div class="card"><h3>📺 Ao vivo agora</h3><div class="num">${aoVivo}<span style="font-size:18px;color:var(--sub)"> / ${EST.canais.length}</span></div><p>canais gravando</p></div>
+    <div class="card"><h3>⏰ Agendador</h3><div class="num">${EST.agendador ? "ON" : "OFF"}</div><p>${ligadas} destino(s) prontos</p></div>
+    <div class="card"><h3>🎬 Na fila</h3><div class="num">${EST.fila_render}</div><p>cortes sendo gerados</p></div>
+    <div class="card"><h3>🤖 Gemini</h3><div class="num">${EST.gemini ? "✓" : "—"}</div><p>${EST.gemini ? "escrevendo títulos e legendas" : "coloque a chave em Contas"}</p></div>`;
+  $("#lista-canais-status").innerHTML = EST.canais.length ? EST.canais.map(c => `
+    <div class="card"><h3>${c.ao_vivo ? '<span class="tag live">● AO VIVO</span>' : '<span class="tag">offline</span>'} ${esc(c.nome)}</h3>
+      <p>Chat: <b>${c.taxa}</b> msg/s · normal ${c.normal}</p>
+      <div class="barra"><i style="width:${Math.min(100, c.normal ? c.taxa / c.normal / 3 * 100 : 0)}%"></i></div>
+      <button class="btn peq" ${c.ao_vivo ? "" : "disabled"} onclick="acao(() => api('/api/clipar',{canal:'${esc(c.nome)}'}).then(() => ({msg:'Corte agendado!'})), this)">✂️ Clipar agora</button></div>`).join("")
+    : `<div class="card vazio"><span class="icone">📺</span>Nenhum canal ainda. Adicione na aba <b>Canais</b>.</div>`;
+  $("#destinos").innerHTML = Object.entries(EST.plataformas).map(([k,p]) => `
+    <div class="card"><h3>${NOMES[k]}</h3>
+      <span class="tag ${p.conectado ? "ok" : "erro"}">${p.conectado ? "conectado" : "não conectado"}</span>
+      <span class="tag ${p.ligado ? "ok" : ""}">${p.ligado ? "no agendador" : "fora do agendador"}</span>
+      ${p.pausa ? `<p style="color:var(--amarelo)">⏸ ${esc(p.pausa)}</p>` : ""}
+      <p>Último envio: ${quando(p.ultima)}</p></div>`).join("");
+  for(const k of ["youtube","tiktok","facebook"]){ const p = EST.plataformas[k]; const t = $("#st-" + k);
+    t.textContent = p.conectado ? "conectado" : "não conectado"; t.className = "tag " + (p.conectado ? "ok" : "erro"); }
+}
+
+/* configuração */
+async function carregarConfig(){
+  CFG = await api("/api/config");
+  const ag = CFG.agendador, dt = CFG.deteccao, gr = CFG.gravacao;
+  $("#ag-ativo").checked = ag.ativo; $("#ag-quantidade").value = ag.quantidade; $("#ag-periodo").value = ag.periodo;
+  $("#ag-score").value = ag.score_minimo; $("#ag-validade").value = ag.horas_validade;
+  $("#ag-inicio").value = ag.hora_inicio; $("#ag-fim").value = ag.hora_fim;
+  $("#ag-youtube").checked = ag.plataformas.youtube; $("#ag-tiktok").checked = ag.plataformas.tiktok; $("#ag-facebook").checked = ag.plataformas.facebook;
+  $("#ag-ia").checked = ag.exigir_textos_ia;
+  $("#ag-dias").innerHTML = DIAS.map((d,i) => `<label><input type="checkbox" value="${i}" ${ag.dias.includes(i) ? "checked" : ""}>${d}</label>`).join("");
+  resumoAgendador();
+  $("#dt-mult").value = dt.multiplicador; $("#dt-antes").value = dt.antes_segundos; $("#dt-depois").value = dt.depois_segundos; $("#dt-cooldown").value = dt.cooldown_segundos;
+  $("#gr-qualidade").value = gr.qualidade; $("#gr-whisper").value = gr.modelo_whisper; $("#gr-dias").value = gr.dias_guardar_cortes; $("#gr-legendas").checked = gr.legendas;
+  $("#yt-client_id").value = CFG.youtube.client_id; $("#yt-privacidade").value = CFG.youtube.privacidade;
+  $("#tt-client_key").value = CFG.tiktok.client_key; $("#tt-redirect_uri").value = CFG.tiktok.redirect_uri;
+  $("#fb-app_id").value = CFG.facebook.app_id;
+  $("#gm-modelo").value = CFG.gemini.modelo;
+  $("#tg-chat_id").value = CFG.telegram.chat_id; $("#tg-avisar_postagem").checked = CFG.telegram.avisar_postagem; $("#tg-avisar_erro").checked = CFG.telegram.avisar_erro;
+  marcar("st-gemini", CFG.gemini.api_key, "chave salva", "sem chave");
+  marcar("st-telegram", CFG.telegram.bot_token && CFG.telegram.chat_id, "ligado", "desligado");
+  if(CFG.youtube.canal) $("#st-youtube").textContent = "conectado: " + CFG.youtube.canal;
+  if(CFG.facebook.page_nome) $("#st-facebook").textContent = "Página: " + CFG.facebook.page_nome;
+  if(CFG.tiktok.usuario) $("#st-tiktok").textContent = "@" + CFG.tiktok.usuario;
+  desenharCanais(CFG.canais);
+}
+function marcar(id, ok, sim, nao){ const t = $("#" + id); t.textContent = ok ? sim : nao; t.className = "tag " + (ok ? "ok" : ""); }
+function resumoAgendador(){
+  const n = +$("#ag-quantidade").value || 1, por = $("#ag-periodo").value;
+  const min = (por === "hora" ? 60 : 1440) / n;
+  $("#ag-resumo").textContent = `➜ ${n} vídeo(s) por ${por}: um a cada ${min >= 60 ? (min/60).toFixed(min % 60 ? 1 : 0) + " h" : Math.round(min) + " min"}, sempre o de maior nota que ainda não foi postado.`;
+}
+["#ag-quantidade","#ag-periodo"].forEach(s => $(s).addEventListener("input", resumoAgendador));
+
+async function salvarAgendador(){
+  const dias = [...document.querySelectorAll("#ag-dias input:checked")].map(i => +i.value);
+  await acao(() => api("/api/config/agendador", {
+    ativo: $("#ag-ativo").checked, quantidade: +$("#ag-quantidade").value || 1, periodo: $("#ag-periodo").value,
+    score_minimo: +$("#ag-score").value, horas_validade: +$("#ag-validade").value || 24,
+    hora_inicio: +$("#ag-inicio").value, hora_fim: +$("#ag-fim").value, dias,
+    exigir_textos_ia: $("#ag-ia").checked,
+    plataformas: {youtube: $("#ag-youtube").checked, tiktok: $("#ag-tiktok").checked, facebook: $("#ag-facebook").checked}
+  }).then(() => ({msg:"Agendador salvo"})));
+  carregarEstado();
+}
+async function salvarDeteccao(){
+  await acao(async () => {
+    await api("/api/config/deteccao", {multiplicador:+$("#dt-mult").value, antes_segundos:+$("#dt-antes").value, depois_segundos:+$("#dt-depois").value, cooldown_segundos:+$("#dt-cooldown").value});
+    await api("/api/config/gravacao", {qualidade:$("#gr-qualidade").value, modelo_whisper:$("#gr-whisper").value, dias_guardar_cortes:+$("#gr-dias").value, legendas:$("#gr-legendas").checked});
+    return {msg:"Configuração salva"};
+  });
+}
+
+/* canais */
+function desenharCanais(lista){
+  const max = EST.max_canais || 5;
+  $("#form-canais").innerHTML = lista.map((c,i) => `
+    <div class="canal-item" data-i="${i}">
+      <span class="n">${i+1}</span>
+      <input class="c-nome" value="${esc(c.nome)}" placeholder="nome do canal na Twitch (ex.: alanzoka)">
+      <select class="c-layout"><option value="blur" ${c.layout === "split" ? "" : "selected"}>Fundo desfocado</option><option value="split" ${c.layout === "split" ? "selected" : ""}>Câmera em cima</option></select>
+      <label class="chave" style="margin:0"><input type="checkbox" class="c-ativo" ${c.ativo !== false ? "checked" : ""}><span class="trilho"></span></label>
+      <button class="btn perigo peq" onclick="this.parentElement.remove(); contarCanais()">✕</button>
+    </div>`).join("") || `<p class="vazio">Nenhum canal. Clique em "Adicionar canal".</p>`;
+  contarCanais();
+}
+function lerCanais(){
+  return [...document.querySelectorAll(".canal-item")].map(d => ({nome: d.querySelector(".c-nome").value.trim(), layout: d.querySelector(".c-layout").value, ativo: d.querySelector(".c-ativo").checked}));
+}
+function contarCanais(){ $("#add-canal").disabled = document.querySelectorAll(".canal-item").length >= (EST.max_canais || 5); }
+function addCanal(){ const l = lerCanais(); if(l.length >= (EST.max_canais || 5)) return; l.push({nome:"", layout:"blur", ativo:true}); desenharCanais(l); document.querySelectorAll(".c-nome")[l.length-1].focus(); }
+async function salvarCanais(){
+  const r = await acao(() => api("/api/canais", {canais: lerCanais().filter(c => c.nome)}));
+  if(r){ toast("Canais salvos: " + (r.canais.map(c => c.nome).join(", ") || "nenhum")); desenharCanais(r.canais); setTimeout(carregarEstado, 800); }
+}
+
+/* contas */
+async function salvarConta(p){
+  const pegar = (pre, campos) => Object.fromEntries(campos.map(c => [c, $("#" + pre + "-" + c).type === "checkbox" ? $("#" + pre + "-" + c).checked : $("#" + pre + "-" + c).value.trim()]));
+  const corpo = {youtube: () => pegar("yt", ["client_id","client_secret","privacidade"]),
+                 tiktok: () => pegar("tt", ["client_key","client_secret","redirect_uri"]),
+                 facebook: () => pegar("fb", ["app_id","app_secret"]),
+                 gemini: () => pegar("gm", ["api_key","modelo"]),
+                 telegram: () => pegar("tg", ["bot_token","chat_id","avisar_postagem","avisar_erro"])}[p]();
+  await acao(() => api("/api/config/" + p, corpo).then(() => ({msg:"Salvo"})));
+  document.querySelectorAll(`#c-${p} input[type=password]`).forEach(i => i.value = "");
+  await carregarConfig(); carregarEstado();
+}
+async function conectar(p){
+  await salvarConta(p);
+  const r = await acao(() => api(`/api/${p}/login`, {}));
+  if(r && r.url){ window.open(r.url, "_blank"); toast("Faça o login na janela que abriu e volte aqui."); }
+}
+async function colarCodigo(p){
+  await acao(() => api(`/api/${p}/codigo`, {texto: $("#tt-retorno").value}));
+  carregarConfig(); carregarEstado();
+}
+const testar = p => acao(() => api(`/api/${p}/testar`, {}));
+async function desconectar(p){ if(!confirm("Desconectar " + p + "?")) return; await acao(() => api("/api/desconectar/" + p, {}).then(() => ({msg:"Desconectado"}))); carregarConfig(); carregarEstado(); }
+async function descobrirChat(){ await salvarConta("telegram"); const r = await acao(() => api("/api/telegram/descobrir", {})); if(r) $("#tg-chat_id").value = r.chat_id; carregarConfig(); }
+async function buscarPaginas(){
+  const r = await acao(() => api("/api/facebook/paginas", {app_id:$("#fb-app_id").value.trim(), app_secret:$("#fb-app_secret").value.trim(), token_usuario:$("#fb-token").value.trim()}));
+  if(!r) return;
+  $("#fb-paginas").innerHTML = r.length ? "<label>Escolha a Página</label>" + r.map(p => `<button class="btn sec peq" style="margin:4px" onclick="escolherPagina('${esc(p.id)}')">📄 ${esc(p.nome)}</button>`).join("") : "<p>Nenhuma Página nesse token.</p>";
+}
+async function escolherPagina(id){ await acao(() => api("/api/facebook/escolher", {id})); $("#fb-paginas").innerHTML = ""; $("#fb-token").value = ""; carregarConfig(); carregarEstado(); }
+
+/* ranking */
+async function carregarRanking(){
+  const lista = await api("/api/ranking?horas=" + $("#rk-horas").value).catch(e => (toast(e.message, "erro"), []));
+  const maior = Math.max(1, ...lista.map(c => c.score));
+  $("#lista-ranking").innerHTML = lista.length ? lista.map((c,i) => {
+    const posts = (c.postagens || []).map(p => `<span class="tag ${p.status === "postado" ? "ok" : p.status === "erro" ? "erro" : "warn"}" title="${esc(p.erro)}">${NOMES[p.plataforma]} ${p.status === "postado" && p.url.startsWith("http") ? `<a href="${esc(p.url)}" target="_blank" style="color:inherit">✓</a>` : p.status}</span>`).join(" ");
+    return `<div class="card corte ${i === 0 ? "medalha-1" : ""}" style="margin-bottom:12px" id="corte-${c.id}">
+      <video src="/video/${c.id}#t=1" controls preload="metadata"></video>
+      <div>
+        <div><span class="pos">#${i+1}</span><b>${esc(c.canal)}</b> <span class="tag">${quando(c.criado)}</span> <span class="tag warn">nota ${c.score.toFixed(1)}</span></div>
+        <div class="barra"><i style="width:${c.score / maior * 100}%"></i></div>
+        <label>Título</label><input class="t-titulo" value="${esc(c.titulo)}" placeholder="(sem título da IA ainda)">
+        <label>Legenda</label><textarea class="t-legenda">${esc(c.legenda)}</textarea>
+        <label>Hashtags</label><input class="t-tags" value="${esc((c.hashtags || []).join(" "))}">
+        ${c.fala ? `<p>🗣️ “${esc(c.fala.slice(0, 220))}${c.fala.length > 220 ? "…" : ""}”</p>` : ""}
+        <div class="pl">${posts}</div>
+        <div class="acoes">
+          <button class="btn sec peq" onclick="salvarTextos(${c.id}, this)">💾 Salvar textos</button>
+          <button class="btn sec peq" onclick="regerar(${c.id}, this)">🤖 Gerar de novo</button>
+          <button class="btn peq" onclick="postarAgora(${c.id}, this)">🚀 Postar agora</button>
+          <button class="btn perigo peq" onclick="descartar(${c.id}, this)">🗑 Descartar</button>
+        </div>
+      </div></div>`;
+  }).join("") : `<div class="card vazio"><span class="icone">✂️</span>Ainda não há cortes. Eles aparecem aqui quando o chat de um canal vigiado explodir.</div>`;
+}
+const blocoCorte = id => $("#corte-" + id);
+async function salvarTextos(id, b){ const d = blocoCorte(id);
+  await acao(() => api(`/api/corte/${id}/textos`, {titulo:d.querySelector(".t-titulo").value, legenda:d.querySelector(".t-legenda").value, hashtags:d.querySelector(".t-tags").value}).then(() => ({msg:"Textos salvos"})), b); }
+async function regerar(id, b){ const t = await acao(() => api(`/api/corte/${id}/regerar`, {}), b); if(t){ toast("Novos textos do Gemini"); carregarRanking(); } }
+async function postarAgora(id, b){
+  const plats = Object.entries(EST.plataformas || {}).filter(([,p]) => p.conectado).map(([k]) => k);
+  if(!plats.length) return toast("Conecte uma conta na aba Contas.", "erro");
+  if(!confirm("Postar agora em: " + plats.map(p => NOMES[p]).join(", ") + "?")) return;
+  await salvarTextos(id);
+  const r = await acao(() => api(`/api/corte/${id}/postar`, {plataformas: plats}), b);
+  if(r){ const erros = Object.entries(r).filter(([,v]) => !v.ok); toast(erros.length ? erros.map(([k,v]) => NOMES[k] + ": " + v.erro).join(" · ") : "Postado! 🚀", erros.length ? "erro" : "ok"); carregarRanking(); }
+}
+async function descartar(id, b){ await acao(() => api(`/api/corte/${id}/descartar`, {sim:true}), b); blocoCorte(id).remove(); }
+
+/* log */
+async function carregarLog(){
+  const [posts, ev] = await Promise.all([api("/api/log"), api("/api/eventos")]).catch(e => (toast(e.message, "erro"), [[],[]]));
+  $("#log-post").innerHTML = posts.length ? posts.map(p => `<tr>
+    <td>${quando(p.quando)}</td><td>${NOMES[p.plataforma]}<br><span class="tag">${esc(p.origem)}</span></td>
+    <td><b>${esc(p.titulo || "(sem título)")}</b><br><span style="color:var(--sub)">${esc(p.canal)}</span></td>
+    <td>${p.score.toFixed(1)}</td>
+    <td>${p.status === "postado" ? `<span class="tag ok">postado</span><br>${p.url.startsWith("http") ? `<a href="${esc(p.url)}" target="_blank">${esc(p.url)}</a>` : esc(p.url)}` : p.status === "erro" ? `<span class="tag erro">erro</span><br><span style="color:#ff8fa2">${esc(p.erro)}</span>` : '<span class="tag warn">enviando…</span>'}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="vazio">Nada postado ainda.</td></tr>`;
+  $("#eventos").innerHTML = ev.map(e => `<div class="${esc(e.nivel)}">${quando(e.quando)} · ${esc(e.texto)}</div>`).join("") || "Sem atividade.";
+}
+
+async function encerrar(){
+  if(!confirm("Encerrar o CortesEX-PRESS? A gravação e as postagens param até você abrir de novo pelo atalho.")) return;
+  await api("/api/encerrar", {}).catch(() => {});
+  document.body.innerHTML = '<div class="vazio" style="padding-top:20vh"><span class="icone">✂️</span><h2>CortesEX-PRESS encerrado</h2><p>Abra de novo pelo atalho da área de trabalho.</p></div>';
+}
+
+/* início */
+(async () => {
+  await carregarEstado();
+  await carregarConfig().catch(e => toast(e.message, "erro"));
+  lerHash();
+  setInterval(carregarEstado, 5000);
+  setInterval(() => { if($("#aba-log").classList.contains("ativa")) carregarLog(); }, 15000);
+})();
+</script>
+</body>
+</html>

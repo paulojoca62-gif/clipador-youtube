@@ -1,0 +1,276 @@
+"""Grava a live, lê o chat e detecta os picos. Uma instância de Canal por canal vigiado.
+
+Baseado no script do Clipador: a live fica gravada em blocos de 4 s (buffer
+rotativo) e, quando o chat dispara acima do normal ou várias pessoas pedem
+"clip", o trecho anterior ao pico vira um corte.
+"""
+
+import logging
+import os
+import random
+import re
+import subprocess
+import threading
+import time
+from collections import Counter, deque
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlparse
+
+from cortesex import util
+
+log = logging.getLogger("cortesex")
+
+RE_HYPE = re.compile(
+    r"(k{4,}|lul|omegalul|kekw|pog|aaaa+|hahaha|rsrs|mds|caralho|que isso|\?{3,}|!{3,})", re.I)
+RE_CLIP = re.compile(r"\bclip(a|ar|ou|ei|em)?\b|\bcorta\b|\bcortem\b", re.I)
+RE_PRIVMSG = re.compile(r"^(?:@\S+ )?:(\w+)!\S+ PRIVMSG #\w+ :(.*)$")
+STOPWORDS = set("a o e de da do que é eu ele ela não nao no na um uma pra pq q mano kkk vc com se os as".split())
+FORMATO_BLOCO = "%Y%m%d-%H%M%S"   # nome dos blocos (o Windows não aceita %s no strftime)
+
+
+def palavras_frequentes(msgs, n=8):
+    c = Counter()
+    for t in msgs:
+        for p in set(re.findall(r"\w{3,}", t.lower())):
+            if p not in STOPWORDS and not re.fullmatch(r"(k|ha|rs)+", p):
+                c[p] += 1
+    return [p for p, _ in c.most_common(n)]
+
+
+class Canal:
+    def __init__(self, cfg_canal: dict, config, pasta: Path, agendar_corte, avisar=None):
+        self.nome = cfg_canal["nome"].lower().strip().lstrip("@")
+        self.layout = cfg_canal.get("layout", "blur")
+        self.cam = cfg_canal.get("cam")
+        self.config = config
+        self.agendar_corte = agendar_corte
+        self.avisar = avisar or (lambda nivel, texto: None)
+        self.dir_seg = pasta / "buffer" / self.nome
+        self.dir_cortes = pasta / "cortes" / self.nome
+        self.dir_seg.mkdir(parents=True, exist_ok=True)
+        self.dir_cortes.mkdir(parents=True, exist_ok=True)
+        self.msgs = deque()
+        self.baseline = None
+        self.inicio_chat = None
+        self.ultimo_corte = 0.0
+        self.cortes_hora = deque()
+        self.gravando = False
+        self.taxa_atual = 0.0
+        self.parar = threading.Event()
+        self._ff = None
+        self._fluxo = None
+        self._threads = []
+
+    # ----- ciclo de vida
+    def iniciar(self):
+        for alvo in (self._loop_gravar, self._loop_chat, self._loop_detectar):
+            t = threading.Thread(target=alvo, name=f"{alvo.__name__}-{self.nome}", daemon=True)
+            t.start()
+            self._threads.append(t)
+
+    def encerrar(self):
+        self.parar.set()
+        for proc in (self._fluxo, self._ff):
+            try:
+                proc and proc.kill()
+            except OSError:
+                pass
+
+    # ----- estado
+    def segmentos(self):
+        out = []
+        for p in self.dir_seg.glob("*.ts"):
+            try:
+                out.append((time.mktime(time.strptime(p.stem, FORMATO_BLOCO)), p))
+            except ValueError:
+                pass
+        out.sort()
+        return out
+
+    @property
+    def ao_vivo(self):
+        if not self.gravando:
+            return False
+        segs = self.segmentos()
+        return bool(segs) and time.time() - segs[-1][0] < 25
+
+    def estado(self):
+        return {"nome": self.nome, "ao_vivo": self.ao_vivo, "chat": self.inicio_chat is not None,
+                "taxa": round(self.taxa_atual, 1), "normal": round(self.baseline or 0, 1)}
+
+    # ----- gravação (streamlink -> ffmpeg em blocos de 4 s)
+    def _loop_gravar(self):
+        avisou = False
+        while not self.parar.is_set():
+            G = self.config.get("gravacao")
+            inicio = time.time()
+            try:
+                self._gravar_uma_vez(G["qualidade"])
+            except Exception as e:  # noqa: BLE001
+                if not avisou:
+                    log.info("[%s] offline ou indisponível (%s)", self.nome, str(e)[:120])
+                    avisou = True
+            finally:
+                self.gravando = False
+            if time.time() - inicio > 60:
+                log.info("[%s] gravação encerrada (live acabou ou caiu)", self.nome)
+                avisou = False
+            self.parar.wait(5 if time.time() - inicio > 60 else 30)
+
+    def _gravar_uma_vez(self, qualidade):
+        """streamlink num processo separado (como o script original), ffmpeg corta em blocos."""
+        r, w = os.pipe()
+        erros = self.dir_seg.parent / f"streamlink_{self.nome}.log"   # arquivo: um pipe cheio travaria
+        try:
+            with open(erros, "wb") as saida_erro:
+                self._fluxo = subprocess.Popen(
+                    util.comando_streamlink() + ["--loglevel", "warning", "--twitch-low-latency", "--stdout",
+                                                 f"https://www.twitch.tv/{self.nome}", qualidade],
+                    stdout=w, stderr=saida_erro, creationflags=util.SEM_JANELA)
+            self._ff = subprocess.Popen(
+                [util.ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+                 "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-f", "segment", "-segment_time", "4",
+                 "-reset_timestamps", "1", "-strftime", "1", str(self.dir_seg / f"{FORMATO_BLOCO}.ts")],
+                stdin=r, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=util.SEM_JANELA)
+        finally:
+            os.close(r)
+            os.close(w)
+        inicio = time.time()
+        while self._fluxo.poll() is None and not self.parar.is_set():
+            if not self.gravando and time.time() - inicio > 8 and self.segmentos():
+                self.gravando = True
+                log.info("[%s] ao vivo: gravando", self.nome)
+            self.parar.wait(1)
+        if self._fluxo.poll() is None:
+            self._fluxo.kill()
+            self._fluxo.wait()
+        try:
+            erro = erros.read_bytes()[-2000:]
+        except OSError:
+            erro = b""
+        try:
+            self._ff.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self._ff.kill()
+        if time.time() - inicio < 60:
+            linhas = erro.decode(errors="ignore").strip().splitlines()
+            raise RuntimeError(linhas[-1] if linhas else "sem live agora")
+
+    # ----- chat (Twitch por WebSocket na porta 443, passa por firewall e proxy)
+    def _loop_chat(self):
+        import websocket
+        while not self.parar.is_set():
+            ws = None
+            try:
+                opcoes = {"sslopt": {"context": util.contexto_ssl()}, "timeout": 30}
+                proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+                if proxy:
+                    u = urlparse(proxy)
+                    opcoes.update(http_proxy_host=u.hostname, http_proxy_port=u.port or 80, proxy_type="http")
+                ws = websocket.create_connection("wss://irc-ws.chat.twitch.tv:443", **opcoes)
+                ws.send(f"NICK justinfan{random.randint(10000, 99999)}")
+                ws.send(f"JOIN #{self.nome}")
+                self.inicio_chat = time.time()
+                log.info("[%s] conectado ao chat", self.nome)
+                ws.settimeout(400)
+                while not self.parar.is_set():
+                    bloco = ws.recv()
+                    if not bloco:
+                        break
+                    for linha in str(bloco).split("\r\n"):
+                        if linha.startswith("PING"):
+                            ws.send("PONG :tmi.twitch.tv")
+                            continue
+                        m = RE_PRIVMSG.match(linha)
+                        if m:
+                            self.nova_msg(m.group(2))
+            except Exception as e:  # noqa: BLE001
+                if not self.parar.is_set():
+                    log.warning("[%s] chat desconectado: %s", self.nome, str(e)[:120])
+            finally:
+                if ws:
+                    try:
+                        ws.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+            self.inicio_chat = None
+            self.parar.wait(5)
+
+    def nova_msg(self, texto, agora=None):
+        agora = agora or time.time()
+        peso = 2.0 if RE_HYPE.search(texto) else 1.0
+        self.msgs.append((agora, peso, texto))
+
+    # ----- detecção
+    def _loop_detectar(self):
+        while not self.parar.wait(1):
+            try:
+                self.tick(time.time(), self.ao_vivo)
+            except Exception:  # noqa: BLE001
+                log.exception("[%s] erro na detecção", self.nome)
+
+    def tick(self, agora, ao_vivo=True):
+        D = self.config.get("deteccao")
+        J = D["janela_segundos"]
+        while self.msgs and self.msgs[0][0] < agora - 120:
+            self.msgs.popleft()
+        recentes = [m for m in self.msgs if m[0] >= agora - J]
+        taxa = sum(m[1] for m in recentes) / J
+        self.taxa_atual = taxa
+        if self.inicio_chat is None:
+            return None
+        aquecido = agora - self.inicio_chat >= D["aquecimento_segundos"]
+        if self.baseline is None:
+            if agora - self.inicio_chat >= 30:
+                janela = [m for m in self.msgs if m[0] >= agora - 30]
+                self.baseline = max(sum(m[1] for m in janela) / 30, 0.2)
+            return None
+        mult = D["multiplicador"]
+        pedidos = sum(1 for m in self.msgs if m[0] >= agora - 15 and RE_CLIP.search(m[2]))
+        score = taxa / self.baseline
+        disparou = None
+        if aquecido and ao_vivo:
+            if score >= mult and taxa >= D["minimo_msgs_por_seg"]:
+                disparou = f"chat {score:.1f}x acima do normal"
+            elif pedidos >= D["pedidos_clip"]:
+                disparou = f"{pedidos} pedidos de clip"
+        alpha = 1 / 120   # o "normal" acompanha devagar o ritmo do chat; picos contam pouco
+        self.baseline = max(self.baseline * (1 - alpha) + min(taxa, self.baseline * mult) * alpha, 0.2)
+        if disparou:
+            return self.disparar(disparou, score, agora)
+        return None
+
+    def disparar(self, motivo, score=0.0, agora=None, manual=False):
+        agora = agora or time.time()
+        D, G = self.config.get("deteccao"), self.config.get("gravacao")
+        if not manual:
+            if agora - self.ultimo_corte < D["cooldown_segundos"]:
+                return None
+            while self.cortes_hora and self.cortes_hora[0] < agora - 3600:
+                self.cortes_hora.popleft()
+            if len(self.cortes_hora) >= G["max_cortes_por_hora"]:
+                return None
+        self.ultimo_corte = agora
+        self.cortes_hora.append(agora)
+        amostra = [m[2] for m in self.msgs if m[0] >= agora - D["janela_segundos"] - 4]
+        job = {
+            "canal": self, "inicio": agora - D["antes_segundos"], "fim": agora + D["depois_segundos"],
+            "momento": agora, "motivo": motivo, "score": round(score, 2), "chat": amostra[-20:],
+            "palavras": palavras_frequentes(amostra),
+        }
+        log.info("[%s] PICO: %s -> corte agendado", self.nome, motivo)
+        self.agendar_corte(job)
+        return job
+
+    def nome_corte(self, momento):
+        return datetime.fromtimestamp(momento).strftime("%Y%m%d_%H%M%S") + f"_{self.nome}"
+
+    def limpar(self, buffer_minutos):
+        limite = time.time() - buffer_minutos * 60
+        for ts, p in self.segmentos():
+            if ts < limite:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass  # no Windows, o bloco em gravação fica travado: sai na próxima volta
