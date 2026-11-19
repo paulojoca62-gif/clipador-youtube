@@ -420,3 +420,15 @@ def test_pagina_de_recuperacao_protegida(tmp_path):
     finally:
         srv.shutdown()
     assert arq.read_bytes() == b"lixo" * 100
+
+
+@pytest.mark.skipif(os.name == "nt", reason="no Windows o cofre é cifrado com DPAPI; permissão POSIX não se aplica")
+def test_backup_da_atualizacao_so_o_dono_le(tmp_path):
+    """AUD-L5: fora do Windows o cofre é texto; a cópia de backup fica 600 e a pasta 700."""
+    from cortesex import atualizacao
+    (tmp_path / "segredos.dat").write_bytes(b'CXS1P:{"gemini.api_key": "x"}')
+    (tmp_path / "config.json").write_text("{}")
+    destino = atualizacao.backup_se_mudou(tmp_path)
+    assert destino and (destino.stat().st_mode & 0o777) == 0o700
+    assert all((f.stat().st_mode & 0o777) == 0o600 for f in destino.iterdir())
+    assert (destino / "segredos.dat").exists()

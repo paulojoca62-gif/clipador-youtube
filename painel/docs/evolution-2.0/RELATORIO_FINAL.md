@@ -1,3 +1,7 @@
+> **Atualização 19/11/2026:** este relatório descreve a entrega 2.0. O estado atual, depois da auditoria
+> independente e da correção integral, está em **CORRECAO_AUDITORIA_FINAL.md** (veredito PASS WITH WARNINGS;
+> 131 testes no Linux, 129 + 1 pulado no Windows; Facebook na Graph API v26.0).
+
 # CortesEX-PRESS 2.0 — Relatório final
 
 Data: 19/11/2026 · Branch `claude/cortesex-painel` · Commit da 2.0: `8c59dc7` · Pasta `painel/`

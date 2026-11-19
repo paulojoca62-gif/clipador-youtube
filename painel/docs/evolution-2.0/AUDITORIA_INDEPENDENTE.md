@@ -100,7 +100,7 @@ Data: 19/11/2026 · Repositório `paulojoca62-gif/clipador-youtube` · Branch `c
 | AUD-H3 | `gravador.py` (`subprocess.Popen`) | `orfao.py`: depois de `kill -9` no pai, **o filho continuou vivo**; mesmo sintoma do incidente de 18/11 | gravadores órfãos duplicam blocos e os cortes saem com a fala repetida | matar o CortesEX-PRESS à força durante uma gravação | `util.popen_vinculado`: Job Object `KILL_ON_JOB_CLOSE` no Windows e `PR_SET_PDEATHSIG` no Linux; teste `test_processo_de_gravacao_morre_junto_com_o_programa` |
 | AUD-H4 | `motor.py`, `plataformas/*` | uma conexão caída no PUT do YouTube/TikTok ou no "finish" do Facebook ficava **erro** e voltava para a fila | o vídeo pode ter sido publicado, a resposta se perdeu e o agendador repostava | levantar `ConnectionError` no `postar` | esses casos agora ficam **incerto**, e só você libera de novo; teste parametrizado |
 
-### Médios (registrados, não corrigidos)
+### Médios (registrados nesta auditoria — **todos CORRIGIDOS depois**, ver CORRECOES_AUDITORIA.md)
 
 | ID | Local | Evidência | Impacto | Recomendação |
 |---|---|---|---|---|
@@ -239,6 +239,9 @@ O sistema diferencia o fim do upload ("processando") da publicação efetiva ("p
 4. Corrigir M5: ordenar considerando a confiança.
 5. Corrigir M6, M7 e M8.
 6. Pedir uma revisão humana externa do código de publicação e de segurança.
+
+> **Atualização (19/11/2026):** M1–M8, L1, L2, L4–L7 e I5 foram corrigidos com teste comportamental na rodada
+> CORRECAO_AUDITORIA_FINAL.md; L3 segue aberto. Este documento fica como registro do estado em `5dc84d7`.
 
 ## 19. Veredito
 
