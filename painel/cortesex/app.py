@@ -74,6 +74,9 @@ def main(abrir_navegador: bool = True):
     from cortesex.atualizador import Atualizador
     painel.atualizador = Atualizador(motor, pasta_dados(), encerrar=sair)
     painel.atualizador.iniciar()
+    from cortesex.telegram_revisao import RevisaoTelegram
+    motor.telegram_rev = RevisaoTelegram(motor)
+    motor.telegram_rev.iniciar()
     for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
         if sig is not None:
             signal.signal(sig, sair)

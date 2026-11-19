@@ -136,16 +136,26 @@ def comando_instalacao(instalador: Path, exe: Path, registro: Path) -> list:
     def q(p):
         return "'" + str(p).replace("'", "''") + "'"
     log_inst = registro.with_suffix(".log")
+    passos = registro.with_name("progresso_atualizacao.txt")
+
+    def passo(texto):
+        return f"Add-Content -Path {q(passos)} -Value ((Get-Date -Format s) + ' {texto}')"
     script = "\n".join([
+        passo("script iniciado"),
         "Start-Sleep -Seconds 4",
         "$c = 1",
         "try {",
         f"  $p = Start-Process -FilePath {q(instalador)} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES',"
-        f"'/NORESTART','/CLOSEAPPLICATIONS',('/LOG=\"' + {q(log_inst)} + '\"') -Wait -PassThru",
-        "  $c = $p.ExitCode",
-        "} catch { $c = 99 }",
+        f"'/NORESTART','/CLOSEAPPLICATIONS',('/LOG=\"' + {q(log_inst)} + '\"') -PassThru",
+        "  $null = $p.Handle",          # sem isso o PowerShell pode perder o ExitCode
+        "  " + passo("instalador iniciado"),
+        # WaitForExit espera só o instalador (Start-Process -Wait esperaria a árvore inteira de processos)
+        "  if ($p.WaitForExit(900000)) { $c = $p.ExitCode } else { $c = 98 }",
+        "} catch { $c = 99; Add-Content -Path " + q(passos) + " -Value $_.Exception.Message }",
+        passo("instalador terminou: ' + $c + '"),
         f"Set-Content -Path {q(registro)} -Value $c",
         f"Start-Process -FilePath {q(exe)} -ArgumentList '--sem-navegador'",
+        passo("programa reaberto"),
     ])
     cod = base64.b64encode(script.encode("utf-16-le")).decode()
     return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -286,7 +296,8 @@ class Atualizador:
         registro = self.dir / "ultima_instalacao.txt"
         registro.unlink(missing_ok=True)
         cmd = comando_instalacao(self.instalador, Path(sys.executable), registro)
-        flags = 0x00000008 | 0x00000200 | 0x08000000 if sys.platform == "win32" else 0  # DETACHED|NEW_GROUP|NO_WINDOW
+        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: console oculto (o PowerShell precisa de um; DETACHED não serve)
+        flags = 0x08000000 | 0x00000200 if sys.platform == "win32" else 0
         self._situacao("instalando", f"instalando o build {self.info['build']}; o programa reabre sozinho")
         log.info("atualizando do build %s para o %s (tentativa %s)", self.build, self.info["build"], n)
         self.popen(cmd, creationflags=flags, close_fds=True, stdin=subprocess.DEVNULL,

@@ -134,6 +134,7 @@ class Motor:
         self.tentativas_ia: dict[int, int] = {}
         self.disco_baixo = False
         self.ia_status = {"ok": None, "quando": 0.0, "erro": ""}
+        self.telegram_rev = None   # cortesex.telegram_revisao.RevisaoTelegram (ligado pelo app)
         self._lock_post = threading.Lock()
         self._lock_pegar = threading.Lock()
         self.workers = max(1, min(int(self.config.get("processamento", "workers_montagem") or 1), 4))
@@ -411,6 +412,8 @@ class Motor:
         if self.config.get("agendador", "modo") == "automatico" and self._passa_filtro_automatico(c):
             destino = D.APROVADO
         self.banco.mudar_estado(c["id"], destino, detalhe)
+        if destino == D.REVISAO and self.telegram_rev:
+            self.telegram_rev.notificar(c["id"])
         meta_json(Path(c["arquivo"]), {"id": c["id"], "motivo": c["motivo"], "score": c["score"],
                                        "score_editorial": c.get("score_editorial"), "chat": c["chat"],
                                        "fala": c.get("fala", ""), "titulo": c["titulo"], "legenda": c["legenda"],

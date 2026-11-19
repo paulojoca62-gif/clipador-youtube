@@ -101,8 +101,9 @@ def test_comando_de_instalacao_aguenta_acentos_e_aspas(tmp_path):
     assert cmd[0] == "powershell.exe" and "-EncodedCommand" in cmd
     script = base64.b64decode(cmd[-1]).decode("utf-16-le")
     assert "João d''Ávila" in script                         # aspas simples dobradas (PowerShell)
-    assert "/VERYSILENT" in script and "-Wait" in script and "--sem-navegador" in script
-    assert script.index("-Wait") < script.index("CortesEX-PRESS.exe")   # reabre só depois do instalador
+    assert "/VERYSILENT" in script and "WaitForExit" in script and "--sem-navegador" in script
+    assert "-Wait " not in script                                # não espera a árvore inteira de processos
+    assert script.index("WaitForExit") < script.index("CortesEX-PRESS.exe")   # reabre só depois do instalador
 
 
 # ----------------------------------------------------------------- quando instala

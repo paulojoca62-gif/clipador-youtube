@@ -406,6 +406,9 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
         <label>Chat ID</label><input id="tg-chat_id">
         <label class="chave"><input type="checkbox" id="tg-avisar_postagem"><span class="trilho"></span>Avisar cada vídeo postado</label>
         <label class="chave"><input type="checkbox" id="tg-avisar_erro"><span class="trilho"></span>Avisar erros e alertas do sistema</label>
+        <label class="chave"><input type="checkbox" id="tg-revisar_pelo_telegram"><span class="trilho"></span>Revisar pelo Telegram: cada corte pronto chega com ✅ Aprovar · ❌ Descartar · 🚀 Postar agora</label>
+        <label class="chave"><input type="checkbox" id="tg-enviar_video"><span class="trilho"></span>Mandar o vídeo junto (até 50 MB)</label>
+        <p class="mini">Os botões só valem no chat configurado acima, e só enquanto o programa estiver aberto. Num grupo, qualquer membro pode tocar nos botões. "Postar agora" usa as redes ligadas no Agendador.</p>
         <div class="acoes">
           <button class="btn sec peq" onclick="salvarConta('telegram')">💾 Salvar</button>
           <button class="btn sec peq" onclick="descobrirChat()">🔎 Descobrir chat</button>
@@ -595,7 +598,7 @@ async function carregarConfig(){
   $("#cofre-info").textContent = CFG._cofre.erro ? "⚠️ " + CFG._cofre.erro : (CFG._cofre.cifrado ? "🔒 As chaves ficam cifradas com a proteção de dados do Windows (DPAPI), só para o seu usuário." : "As chaves ficam num arquivo só legível pelo seu usuário (sem cifra fora do Windows).");
   val("yt-client_id", CFG.youtube.client_id); val("yt-privacidade", CFG.youtube.privacidade);
   val("tt-client_key", CFG.tiktok.client_key); val("tt-redirect_uri", CFG.tiktok.redirect_uri); val("fb-app_id", CFG.facebook.app_id);
-  val("gm-modelo", CFG.gemini.modelo); val("tg-chat_id", CFG.telegram.chat_id); val("tg-avisar_postagem", CFG.telegram.avisar_postagem); val("tg-avisar_erro", CFG.telegram.avisar_erro);
+  val("gm-modelo", CFG.gemini.modelo); val("tg-chat_id", CFG.telegram.chat_id); val("tg-avisar_postagem", CFG.telegram.avisar_postagem); val("tg-avisar_erro", CFG.telegram.avisar_erro); val("tg-revisar_pelo_telegram", CFG.telegram.revisar_pelo_telegram !== false); val("tg-enviar_video", CFG.telegram.enviar_video !== false);
   marcar("st-gemini", CFG.gemini.api_key, "chave salva", "sem chave");
   marcar("st-telegram", CFG.telegram.bot_token && CFG.telegram.chat_id, "ligado", "desligado");
   if(CFG.youtube.canal) $("#st-youtube").textContent = "conectado: " + CFG.youtube.canal;
@@ -700,7 +703,7 @@ async function salvarConta(p){
   const pegar = (pre, campos) => Object.fromEntries(campos.map(c => { const e = $("#" + pre + "-" + c); return [c, e.type === "checkbox" ? e.checked : e.value.trim()]; }));
   const corpo = {youtube: () => pegar("yt", ["client_id","client_secret","privacidade"]), tiktok: () => pegar("tt", ["client_key","client_secret","redirect_uri"]),
     facebook: () => pegar("fb", ["app_id","app_secret"]), gemini: () => pegar("gm", ["api_key","modelo"]),
-    telegram: () => pegar("tg", ["bot_token","chat_id","avisar_postagem","avisar_erro"])}[p]();
+    telegram: () => pegar("tg", ["bot_token","chat_id","avisar_postagem","avisar_erro","revisar_pelo_telegram","enviar_video"])}[p]();
   await acao(() => api("/api/config/" + p, corpo).then(() => ({msg:"Salvo"})));
   document.querySelectorAll(`#c-${p} input[type=password]`).forEach(i => i.value = "");
   await carregarConfig(); carregarEstado();

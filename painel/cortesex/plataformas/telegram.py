@@ -14,7 +14,8 @@ def enviar(cfg: dict, texto: str) -> None:
 
 def descobrir_chat(cfg: dict) -> str:
     """O chat_id da última conversa com o bot (mande um "oi" para ele antes)."""
-    r = requests.get(f"https://api.telegram.org/bot{cfg['bot_token']}/getUpdates", timeout=20)
+    r = requests.get(f"https://api.telegram.org/bot{cfg['bot_token']}/getUpdates", timeout=20,
+                     params={"allowed_updates": '["message","channel_post","callback_query"]'})
     r.raise_for_status()
     for u in reversed(r.json().get("result", [])):
         msg = u.get("message") or u.get("channel_post") or {}

@@ -124,7 +124,9 @@ PADRAO = {
                "expira_em": 0, "usuario": "", "redirect_uri": "", "privacidade": ""},
     "facebook": {"app_id": "", "app_secret": "", "page_id": "", "page_nome": "", "page_token": ""},
     "gemini": {"api_key": "", "modelo": "gemini-flash-latest"},
-    "telegram": {"bot_token": "", "chat_id": "", "avisar_postagem": True, "avisar_erro": True},
+    "telegram": {"bot_token": "", "chat_id": "", "avisar_postagem": True, "avisar_erro": True,
+                 "revisar_pelo_telegram": True,   # corte pronto chega com vídeo e botões Aprovar/Descartar/Postar
+                 "enviar_video": True},
 }
 
 

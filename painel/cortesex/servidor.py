@@ -313,7 +313,13 @@ class Painel:
             self.motor.ia_status = {"ok": True, "quando": time.time(), "erro": ""}
             return {"msg": f"Funcionando. Exemplo: {t['titulo']}"}
         if caminho == "/api/telegram/descobrir":
-            chat = telegram.descobrir_chat(cfg.get("telegram"))
+            try:
+                chat = telegram.descobrir_chat(cfg.get("telegram"))
+            except Exception:
+                # com a revisão pelo Telegram ligada, quem lê as mensagens é ela (o Telegram só deixa um leitor)
+                chat = self.motor.banco.get_meta("telegram_ultimo_chat", "")
+                if not chat:
+                    raise
             cfg.salvar("telegram", {"chat_id": chat})
             return {"msg": f"Chat encontrado: {chat}", "chat_id": chat}
         if caminho == "/api/telegram/testar":
