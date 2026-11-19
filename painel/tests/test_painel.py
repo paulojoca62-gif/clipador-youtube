@@ -146,7 +146,7 @@ def test_completa_textos_que_faltaram(ambiente, monkeypatch):
     com = corte(m, pasta, 2.0)
     falhas = iter([RuntimeError("lento")])
 
-    def gerar(canal, fala, chat, chave, modelo=None):
+    def gerar(canal, fala, chat, chave, modelo=None, **_):
         erro = next(falhas, None)
         if erro:
             raise erro
