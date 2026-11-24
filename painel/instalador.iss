@@ -45,8 +45,29 @@ Name: "{autodesktop}\{#Nome}"; Filename: "{app}\CortesEX-PRESS.exe"; Tasks: desk
 Name: "{userstartup}\{#Nome}"; Filename: "{app}\CortesEX-PRESS.exe"; Tasks: iniciar
 
 [Run]
-; Na atualização automática (instalação silenciosa) quem reabre o programa é o atualizador, depois do instalador.
 Filename: "{app}\CortesEX-PRESS.exe"; Description: "Abrir o {#Nome} agora"; Flags: nowait postinstall skipifsilent
+; Atualização automática (/VERYSILENT /REABRIR): reabre o programa sem abrir o navegador
+Filename: "{app}\CortesEX-PRESS.exe"; Parameters: "--sem-navegador"; Flags: nowait runasoriginaluser; Check: Reabrir
+
+[Code]
+// Antes de copiar: encerra TODOS os CortesEX-PRESS.exe (o painel e as gravações, que usam o mesmo .exe
+// com --streamlink). Sem isso dá "DeleteFile falhou; código 5 / Acesso negado" e, em modo silencioso,
+// a atualização desiste sem avisar.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Codigo: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM CortesEX-PRESS.exe', '', SW_HIDE,
+       ewWaitUntilTerminated, Codigo);
+  Sleep(1500);
+  Result := '';
+end;
+
+function Reabrir: Boolean;
+begin
+  Result := WizardSilent and (Pos('/REABRIR', Uppercase(GetCmdTail)) > 0);
+end;
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C taskkill /F /T /IM CortesEX-PRESS.exe"; Flags: runhidden; RunOnceId: "Encerrar"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""CortesEX-PRESS reabrir"" /F"; Flags: runhidden; RunOnceId: "Tarefa"

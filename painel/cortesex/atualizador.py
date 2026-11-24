@@ -7,15 +7,16 @@ Fluxo:
 3. Espera o programa ficar parado: nenhum envio em andamento, nada sendo processado e nenhuma live
    gravando. Se as lives não pararem em `espera_maxima_horas`, atualiza assim que o processamento e os
    envios estiverem livres (a gravação perde ~1 min de buffer e volta sozinha).
-4. Roda o instalador em modo silencioso por um PowerShell separado, fecha o programa e, terminado
-   o instalador (com sucesso ou não), abre o CortesEX-PRESS de novo.
+4. Agenda uma tarefa do Windows que reabre o programa (rede de segurança), roda o próprio instalador
+   em modo silencioso (sem PowerShell: antivírus costumam barrar PowerShell oculto) e fecha o programa.
+   O instalador reabre o CortesEX-PRESS no fim; se ele for bloqueado, a tarefa reabre assim mesmo.
+   Ao abrir, o programa apaga a tarefa.
 
 Segurança: só baixa do repositório e da tag fixos abaixo, por HTTPS, com limite de tamanho; não executa
 nada que não tenha o hash conferido. Cada build é tentado no máximo 3 vezes (evita laço de reinstalação).
 Só aplica no executável do Windows; rodando pelo código-fonte, apenas informa.
 """
 
-import base64
 import hashlib
 import json
 import logging
@@ -130,43 +131,38 @@ def _sha256(arq: Path) -> str:
     return h.hexdigest()
 
 
-def comando_instalacao(instalador: Path, exe: Path, registro: Path) -> list:
-    """PowerShell (oculto) que espera o programa fechar, instala em silêncio e abre o programa de novo.
-    O script vai em -EncodedCommand (UTF-16): caminhos com acento ou espaço não quebram."""
-    def q(p):
-        return "'" + str(p).replace("'", "''") + "'"
-    log_inst = registro.with_suffix(".log")
-    passos = registro.with_name("progresso_atualizacao.txt")
+TAREFA = "CortesEX-PRESS reabrir"
 
-    def passo(texto):
-        return f"Add-Content -Path {q(passos)} -Value ((Get-Date -Format s) + ' {texto}')"
-    script = "\n".join([
-        passo("script iniciado"),
-        "Start-Sleep -Seconds 4",
-        "$c = 1",
-        "try {",
-        f"  $p = Start-Process -FilePath {q(instalador)} -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES',"
-        f"'/NORESTART','/CLOSEAPPLICATIONS',('/LOG=\"' + {q(log_inst)} + '\"') -PassThru",
-        "  $null = $p.Handle",          # sem isso o PowerShell pode perder o ExitCode
-        "  " + passo("instalador iniciado"),
-        # WaitForExit espera só o instalador (Start-Process -Wait esperaria a árvore inteira de processos)
-        "  if ($p.WaitForExit(900000)) { $c = $p.ExitCode } else { $c = 98 }",
-        "} catch { $c = 99; Add-Content -Path " + q(passos) + " -Value $_.Exception.Message }",
-        passo("instalador terminou: ' + $c + '"),
-        f"Set-Content -Path {q(registro)} -Value $c",
-        f"Start-Process -FilePath {q(exe)} -ArgumentList '--sem-navegador'",
-        passo("programa reaberto"),
-    ])
-    cod = base64.b64encode(script.encode("utf-16-le")).decode()
-    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-            "-WindowStyle", "Hidden", "-EncodedCommand", cod]
+
+def comando_instalacao(instalador: Path, registro: Path) -> list:
+    """O próprio instalador (Inno Setup), sem PowerShell: fecha o programa, instala em silêncio e,
+    com /REABRIR, abre o CortesEX-PRESS de novo no fim. O log vai para `registro` com extensão .log."""
+    return [str(instalador), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS",
+            "/FORCECLOSEAPPLICATIONS", f"/LOG={registro.with_suffix('.log')}", "/REABRIR"]
+
+
+def comando_rede_de_seguranca(exe: Path) -> list:
+    """Tarefa agendada do Windows que abre o programa a cada 2 min até ele iniciar (ele apaga a tarefa
+    ao abrir; se já estiver aberto, a nova cópia só sai). Cobre o caso de o instalador ser bloqueado."""
+    return ["schtasks", "/Create", "/TN", TAREFA, "/SC", "MINUTE", "/MO", "2", "/F",
+            "/TR", f'"{exe}" --sem-navegador']
+
+
+def apagar_rede_de_seguranca(rodar=subprocess.run):
+    if sys.platform != "win32":
+        return
+    try:
+        rodar(["schtasks", "/Delete", "/TN", TAREFA, "/F"], capture_output=True, timeout=20,
+              creationflags=0x08000000)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class Atualizador:
     def __init__(self, motor, pasta: Path, encerrar=None, get=requests.get, popen=subprocess.Popen,
-                 relogio=time.time):
+                 relogio=time.time, rodar=subprocess.run):
         self.motor, self.pasta, self.encerrar = motor, Path(pasta), encerrar
-        self.get, self.popen, self.relogio = get, popen, relogio
+        self.get, self.popen, self.relogio, self.rodar = get, popen, relogio, rodar
         self.dir = self.pasta / "atualizacoes"
         self.arq_estado = self.dir / "estado.json"
         self.build, self.commit = build_atual()
@@ -210,8 +206,9 @@ class Atualizador:
             self._gravar({})
             for f in self.dir.glob("CortesEX-PRESS-build*.exe"):
                 f.unlink(missing_ok=True)
-        elif codigo:
-            log.warning("a atualização para o build %s não concluiu (código do instalador: %s)", d["build"], codigo)
+        else:
+            log.warning("a atualização para o build %s não concluiu%s; veja %s", d["build"],
+                        f" (código {codigo})" if codigo else "", self.dir / "ultima_instalacao.log")
 
     def _situacao(self, situacao, mensagem=""):
         self.estado.update(situacao=situacao, mensagem=mensagem)
@@ -295,13 +292,18 @@ class Atualizador:
         self._gravar({"build": self.info["build"], "tentativas": n, "quando": self.relogio()})
         registro = self.dir / "ultima_instalacao.txt"
         registro.unlink(missing_ok=True)
-        cmd = comando_instalacao(self.instalador, Path(sys.executable), registro)
-        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: console oculto (o PowerShell precisa de um; DETACHED não serve)
-        flags = 0x08000000 | 0x00000200 if sys.platform == "win32" else 0
+        sem_janela = 0x08000000 if sys.platform == "win32" else 0
+        try:   # rede de segurança: se o instalador for bloqueado, o programa volta assim mesmo
+            self.rodar(comando_rede_de_seguranca(Path(sys.executable)), capture_output=True, timeout=20,
+                       creationflags=sem_janela)
+        except Exception as e:  # noqa: BLE001
+            log.warning("não consegui agendar a reabertura de segurança: %s", e)
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: o instalador segue vivo depois que o programa fecha
+        flags = 0x00000008 | 0x00000200 if sys.platform == "win32" else 0
         self._situacao("instalando", f"instalando o build {self.info['build']}; o programa reabre sozinho")
         log.info("atualizando do build %s para o %s (tentativa %s)", self.build, self.info["build"], n)
-        self.popen(cmd, creationflags=flags, close_fds=True, stdin=subprocess.DEVNULL,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.popen(comando_instalacao(self.instalador, registro), creationflags=flags, close_fds=True,
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if self.encerrar:
             threading.Timer(1.0, self.encerrar).start()
 

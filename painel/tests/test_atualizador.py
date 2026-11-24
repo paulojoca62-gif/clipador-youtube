@@ -1,8 +1,8 @@
 """Atualização automática: consulta, download conferido, quando instala e quando espera."""
-import base64
 import hashlib
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -95,15 +95,21 @@ def test_download_maior_que_o_anunciado_e_cortado(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_comando_de_instalacao_aguenta_acentos_e_aspas(tmp_path):
+def test_comando_de_instalacao_sem_powershell(tmp_path):
     inst = tmp_path / "João d'Ávila" / "inst.exe"
-    cmd = A.comando_instalacao(inst, tmp_path / "Programas" / "CortesEX-PRESS.exe", tmp_path / "r.txt")
-    assert cmd[0] == "powershell.exe" and "-EncodedCommand" in cmd
-    script = base64.b64decode(cmd[-1]).decode("utf-16-le")
-    assert "João d''Ávila" in script                         # aspas simples dobradas (PowerShell)
-    assert "/VERYSILENT" in script and "WaitForExit" in script and "--sem-navegador" in script
-    assert "-Wait " not in script                                # não espera a árvore inteira de processos
-    assert script.index("WaitForExit") < script.index("CortesEX-PRESS.exe")   # reabre só depois do instalador
+    cmd = A.comando_instalacao(inst, tmp_path / "r.txt")
+    assert cmd[0] == str(inst) and "powershell" not in " ".join(cmd).lower()   # antivírus barram PowerShell oculto
+    assert {"/VERYSILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/REABRIR"} <= set(cmd)
+    assert f"/LOG={tmp_path / 'r.log'}" in cmd
+    rede = A.comando_rede_de_seguranca(tmp_path / "Programas" / "CortesEX-PRESS.exe")
+    assert rede[:2] == ["schtasks", "/Create"] and A.TAREFA in rede and "--sem-navegador" in rede[-1]
+
+
+def test_instalador_reabre_o_programa_na_atualizacao():
+    iss = (Path(__file__).resolve().parents[1] / "instalador.iss").read_text(encoding="utf-8")
+    assert "Check: Reabrir" in iss and "'/REABRIR'" in iss and "WizardSilent" in iss
+    assert "schtasks.exe" in iss and "CortesEX-PRESS reabrir" in iss          # desinstalar apaga a tarefa
+    assert "PrepareToInstall" in iss and "/F /T /IM CortesEX-PRESS.exe" in iss  # fecha tudo antes de copiar
 
 
 # ----------------------------------------------------------------- quando instala
@@ -113,9 +119,10 @@ def atu(ambiente, monkeypatch):
     monkeypatch.setattr(A, "build_atual", lambda: (12, "old"))
     monkeypatch.setattr(A, "pode_aplicar", lambda: True)
     rodou, fechou = [], []
+    agendado = []
     a = A.Atualizador(m, pasta, encerrar=lambda: fechou.append(1), get=github(),
-                      popen=lambda cmd, **k: rodou.append(cmd))
-    a.rodou, a.fechou = rodou, fechou
+                      popen=lambda cmd, **k: rodou.append(cmd), rodar=lambda cmd, **k: agendado.append(cmd))
+    a.rodou, a.fechou, a.agendado = rodou, fechou, agendado
     monkeypatch.setattr(A.threading, "Timer", lambda s, f: type("T", (), {"start": lambda self: f()})())
     return a, m, pasta
 
@@ -124,6 +131,8 @@ def test_instala_quando_esta_livre(atu):
     a, m, pasta = atu
     e = a.passo()
     assert e["situacao"] == "instalando" and len(a.rodou) == 1 and a.fechou == [1]
+    assert a.agendado and a.agendado[0][:2] == ["schtasks", "/Create"]          # rede de segurança antes de fechar
+    assert a.rodou[0][0].endswith("CortesEX-PRESS-build13.exe")
     assert json.loads((pasta / "atualizacoes" / "estado.json").read_text())["build"] == 13
 
 

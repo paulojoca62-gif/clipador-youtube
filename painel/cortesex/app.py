@@ -62,6 +62,8 @@ def main(abrir_navegador: bool = True):
         return
     configurar_log()
     usar_certificados_do_sistema()
+    from cortesex.atualizador import apagar_rede_de_seguranca
+    apagar_rede_de_seguranca()        # abriu: a reabertura de segurança da atualização não é mais necessária
     copia = backup_se_mudou(pasta_dados())
     if copia:
         logging.getLogger("cortesex").info("versão nova: backup da configuração e do banco em %s", copia.name)
