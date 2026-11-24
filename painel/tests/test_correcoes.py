@@ -543,3 +543,68 @@ def test_post_sem_internet_volta_para_a_fila(ambiente, monkeypatch):
     with pytest.raises(ErroPostagem):
         m.postar(m.banco.corte(cid), "youtube")
     assert m.banco.postagens_de(cid)[0]["status"] == "erro"
+
+
+# ================================================================ descartar e espaço em disco
+def _corte_com_arquivos(m, pasta):
+    cid = corte(m, pasta, 3.0)
+    c = m.banco.corte(cid)
+    m.banco.mudar_estado(cid, D.REVISAO)
+    arq = motormod.arquivos(c)
+    for p in (arq["fonte"], arq["legendas"], arq["original"]):
+        p.write_bytes(b"x")
+    return cid, c, arq
+
+
+def test_descartar_padrao_nao_apaga_e_recupera(ambiente):
+    m, pasta = ambiente
+    cid, c, arq = _corte_com_arquivos(m, pasta)
+    assert m.descartar(cid, True, "ruim") == {"ok": True, "apagado": False}
+    assert arq["video"].exists() and arq["fonte"].exists()
+    m.descartar(cid, False)
+    assert m.banco.corte(cid)["estado"] == D.REVISAO
+
+
+def test_apagar_ao_descartar_tira_do_disco_e_bloqueia_recuperar(ambiente):
+    m, pasta = ambiente
+    m.config.salvar("armazenamento", {"apagar_ao_descartar": True})
+    cid, c, arq = _corte_com_arquivos(m, pasta)
+    reel = arq["video"].with_name(arq["video"].stem + "_reel60.mp4")
+    reel.write_bytes(b"x")
+    assert m.descartar(cid, True)["apagado"] is True
+    assert not any(p.exists() for p in (arq["video"], arq["fonte"], arq["legendas"], arq["original"], reel))
+    assert m.banco.corte(cid)["arquivo_removido"] == 1 and m.banco.corte(cid)["estado"] == D.DESCARTADO
+    with pytest.raises(ValueError, match="já foi apagado"):
+        m.descartar(cid, False)
+
+
+def test_apagar_ao_descartar_respeita_envio_em_andamento(ambiente):
+    m, pasta = ambiente
+    m.config.salvar("armazenamento", {"apagar_ao_descartar": True})
+    cid, c, arq = _corte_com_arquivos(m, pasta)
+    m.banco.nova_postagem(cid, "youtube")                     # enviando
+    assert m.descartar(cid, True)["apagado"] is False and arq["video"].exists()
+
+
+def test_limpeza_apaga_descartados_antes_dos_outros(ambiente):
+    m, pasta = ambiente
+    descartado, _, arq_d = _corte_com_arquivos(m, pasta)
+    normal, _, arq_n = _corte_com_arquivos(m, pasta)
+    m.descartar(descartado, True)
+    m.limpar(agora=time.time() + 2 * 86400)                  # 2 dias depois: descartados (1 dia) saem
+    assert not arq_d["video"].exists() and m.banco.corte(descartado)["arquivo_removido"] == 1
+    assert arq_n["video"].exists()                            # os outros só depois de 7 dias
+
+
+def test_telegram_descartar_usa_a_mesma_regra(ambiente):
+    from cortesex import telegram_revisao as T
+    m, pasta = ambiente
+    m.config.salvar("telegram", {"bot_token": "1:AAA", "chat_id": "5"})
+    m.config.salvar("armazenamento", {"apagar_ao_descartar": True})
+    cid, c, arq = _corte_com_arquivos(m, pasta)
+    enviados = []
+    ok = type("R", (), {"status_code": 200, "json": lambda s: {"ok": True, "result": {}}})()
+    r = T.RevisaoTelegram(m, post=lambda url, **k: enviados.append(k.get("json")) or ok, get=None, assincrono=False)
+    r.tratar({"update_id": 1, "callback_query": {"id": "q", "data": T.dados_botao("1:AAA", "d", cid),
+                                                 "message": {"message_id": 3, "chat": {"id": 5}}}})
+    assert not arq["video"].exists() and any("apagado do disco" in (e or {}).get("text", "") for e in enviados)

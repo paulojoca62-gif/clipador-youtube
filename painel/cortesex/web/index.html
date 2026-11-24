@@ -458,6 +458,8 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
         <div><label>Pausar gravação abaixo de (GB livres)</label><input type="number" id="ar-livre" min="1" value="5"></div>
       </div>
       <label class="chave"><input type="checkbox" id="ar-publicados"><span class="trilho"></span>Manter vídeos já publicados (não apagar na limpeza)</label>
+      <label class="chave"><input type="checkbox" id="ar-apagar-descartar"><span class="trilho"></span>Apagar o vídeo do disco na hora ao descartar (não dá para recuperar depois)</label>
+      <div class="linha"><div><label>Guardar descartados por (dias)</label><input type="number" id="ar-dias-descartados" min="0" step="0.5" value="1"></div></div>
       <p class="mini">Cortes aprovados e envios em andamento nunca são apagados pela limpeza. Mudar "cortes ao mesmo tempo" vale ao reabrir o programa.</p>
       <h3 style="margin-top:18px">⚖️ Pesos da nota editorial (versão <span id="ps-versao">1</span>)</h3>
       <div class="linha" id="ps-pesos"></div>
@@ -618,6 +620,7 @@ async function carregarConfig(){
   val("lg-contorno", lg.contorno); val("lg-margem", lg.margem_inferior); val("lg-lateral", lg.margem_lateral); val("lg-chars", lg.max_caracteres); val("lg-animacao", lg.animacao);
   val("pr-workers", CFG.processamento.workers_montagem); val("pr-tentativas", CFG.processamento.tentativas_etapa);
   val("ar-fontes", CFG.armazenamento.dias_guardar_fontes); val("ar-livre", CFG.armazenamento.minimo_livre_gb); val("ar-publicados", CFG.armazenamento.manter_publicados);
+  val("ar-apagar-descartar", CFG.armazenamento.apagar_ao_descartar); val("ar-dias-descartados", CFG.armazenamento.dias_guardar_descartados ?? 1);
   val("an-ativo", CFG.analytics.ativo);
   $("#ps-versao").textContent = CFG.pontuacao.versao;
   $("#ps-pesos").innerHTML = Object.entries(CFG.pontuacao.pesos).map(([k,v]) => `<div><label>${esc(PESOS[k] || k)}</label><input type="number" min="0" max="100" data-peso="${k}" value="${v}"></div>`).join("");
@@ -695,7 +698,8 @@ async function salvarSistema(){
   const mudou = JSON.stringify(pesos) !== JSON.stringify(CFG.pontuacao.pesos);
   await acao(async () => {
     await api("/api/config/processamento", {workers_montagem:+$("#pr-workers").value, tentativas_etapa:+$("#pr-tentativas").value});
-    await api("/api/config/armazenamento", {dias_guardar_fontes:+$("#ar-fontes").value, minimo_livre_gb:+$("#ar-livre").value, manter_publicados:$("#ar-publicados").checked});
+    await api("/api/config/armazenamento", {dias_guardar_fontes:+$("#ar-fontes").value, minimo_livre_gb:+$("#ar-livre").value, manter_publicados:$("#ar-publicados").checked,
+      apagar_ao_descartar:$("#ar-apagar-descartar").checked, dias_guardar_descartados:Math.max(0, +$("#ar-dias-descartados").value || 0)});
     await api("/api/config/gravacao", {dias_guardar_cortes:+$("#gr-dias").value});
     await api("/api/config/analytics", {ativo:$("#an-ativo").checked});
     if(mudou) await api("/api/config/pontuacao", {pesos, versao:(CFG.pontuacao.versao||1) + 1});
@@ -797,7 +801,7 @@ function cartaoCorte(c, i){
         <button class="btn sec peq" onclick="abrirEditor(${c.id})">🎬 Editar</button>
         <button class="btn peq" onclick="postarAgora(${c.id}, this)">🚀 Postar agora</button>` : ""}
         ${c.estado === "falhou" ? `<button class="btn peq" onclick="reprocessar(${c.id}, this)">🔁 Reprocessar</button>` : ""}
-        ${c.estado === "descartado" ? `<button class="btn sec peq" onclick="descartar(${c.id}, false, this)">♻ Recuperar</button>` : `<button class="btn perigo peq" onclick="descartar(${c.id}, true, this)">🗑 Descartar</button>`}
+        ${c.estado === "descartado" && c.arquivo_removido ? `<span class="mini">vídeo apagado</span>` : c.estado === "descartado" ? `<button class="btn sec peq" onclick="descartar(${c.id}, false, this)">♻ Recuperar</button>` : `<button class="btn perigo peq" onclick="descartar(${c.id}, true, this)">🗑 Descartar</button>`}
         <button class="btn sec peq" onclick="historico(${c.id}, this)">🕘 Histórico</button>
       </div>
       <div class="hist" id="hist-${c.id}"></div>
@@ -818,8 +822,9 @@ async function aprovar(id, sim, b){ await acao(() => api(`/api/corte/${id}/${sim
 async function reprocessar(id, b){ await acao(() => api(`/api/corte/${id}/reprocessar`, {}).then(r => ({msg:"Reprocessando a partir de: " + (ESTADOS[r.estado] || r.estado)})), b); carregarCortes(); }
 async function descartar(id, sim, b){
   let motivo = "";
-  if(sim){ motivo = prompt("Motivo do descarte (opcional):", "") ; if(motivo === null) return; }
-  await acao(() => api(`/api/corte/${id}/descartar`, {sim, motivo}), b); carregarCortes();
+  const apaga = sim && CFG && CFG.armazenamento && CFG.armazenamento.apagar_ao_descartar;
+  if(sim){ motivo = prompt((apaga ? "O vídeo será APAGADO do disco e não poderá ser recuperado.\n\n" : "") + "Motivo do descarte (opcional):", "") ; if(motivo === null) return; }
+  await acao(() => api(`/api/corte/${id}/descartar`, {sim, motivo}).then(r => ({msg: r.apagado ? "Descartado e apagado do disco" : (sim ? "Descartado" : "Recuperado")})), b); carregarCortes();
 }
 async function historico(id, b){
   const c = await acao(() => api(`/api/corte/${id}`), b); if(!c) return;

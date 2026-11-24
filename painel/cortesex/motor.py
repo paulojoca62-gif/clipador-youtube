@@ -531,6 +531,35 @@ class Motor:
         self.banco.historico(corte_id, estado_antes, "remontado no editor")
         return self.banco.corte(corte_id)
 
+    def _apagar_arquivos(self, c) -> bool:
+        """Apaga vídeo, fonte, legendas e cópias do corte. Não mexe em corte com envio em andamento."""
+        for rede in PLATAFORMAS:
+            p = self.banco.ja_postado(c["id"], rede)
+            if p and p["status"] in ("enviando", "processando"):
+                return False
+        arq = arquivos(c)
+        base = Path(c["arquivo"])
+        extras = [base.with_name(base.stem + "_reel60.mp4")]
+        for p in (arq["video"], arq["meta"], arq["original"], arq["legendas"], arq["fonte"], arq["palavras"], *extras):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.banco.atualizar(c["id"], arquivo_removido=1)
+        return True
+
+    def descartar(self, corte_id, sim=True, motivo="") -> dict:
+        """Descarta (ou recupera) um corte. Com "apagar ao descartar", o vídeo sai do disco na hora."""
+        if not sim and (self.banco.corte(corte_id) or {}).get("arquivo_removido"):
+            raise ValueError("o vídeo desse corte já foi apagado do disco; não dá para recuperar")
+        self.banco.descartar(corte_id, sim, motivo)
+        apagado = False
+        if sim and self.config.get("armazenamento", "apagar_ao_descartar"):
+            apagado = self._apagar_arquivos(self.banco.corte(corte_id))
+            if apagado:
+                self.banco.historico(corte_id, D.DESCARTADO, "vídeo apagado do disco ao descartar")
+        return {"ok": True, "apagado": apagado}
+
     def editor(self, corte_id) -> dict:
         c = self.banco.corte(corte_id)
         arq = arquivos(c)
@@ -859,6 +888,12 @@ class Motor:
                         removidos["fontes"] += chave == "fonte"
                     except OSError:
                         pass
+        # descartados: prazo próprio (mais curto)
+        dias_desc = A.get("dias_guardar_descartados")
+        if dias_desc is not None:
+            for c in self.banco.para_limpeza(agora - max(float(dias_desc), 0) * 86400):
+                if c["estado"] == D.DESCARTADO and self._apagar_arquivos(c):
+                    removidos["cortes"] += 1
         # vídeos dos cortes
         limite = agora - float(G.get("dias_guardar_cortes", 7)) * 86400
         for c in self.banco.para_limpeza(limite):

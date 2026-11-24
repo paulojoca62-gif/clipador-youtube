@@ -95,6 +95,8 @@ PADRAO = {
     "armazenamento": {
         "dias_guardar_fontes": 3,     # janela larga usada para re-render e editor de legendas
         "manter_publicados": False,
+        "apagar_ao_descartar": False, # True: o vídeo descartado sai do disco na hora (sem "recuperar" depois)
+        "dias_guardar_descartados": 1,
         "minimo_livre_gb": 5,
     },
     "agendador": {

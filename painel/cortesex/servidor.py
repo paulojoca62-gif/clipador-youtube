@@ -242,8 +242,7 @@ class Painel:
                     res[p] = {"ok": False, "erro": seguranca.redigir(e)}
             return res
         if acao == "descartar":
-            m.banco.descartar(cid, bool(corpo.get("sim", True)), str(corpo.get("motivo", ""))[:200])
-            return {"ok": True}
+            return m.descartar(cid, bool(corpo.get("sim", True)), str(corpo.get("motivo", ""))[:200])
         if acao in ("aprovar", "desaprovar"):
             if corte["estado"] not in ("aguardando_revisao", "aprovado"):
                 raise ValueError("só cortes prontos podem ser aprovados")

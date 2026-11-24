@@ -142,8 +142,9 @@ class RevisaoTelegram:
         if acao == "d":
             if c["estado"] not in (D.REVISAO, D.APROVADO):
                 return self._responder(q, f"Esse corte já está: {c['estado'].replace('_', ' ')}.", fechar=True)
-            self.motor.banco.descartar(cid, True, "descartado pelo Telegram")
-            return self._responder(q, f"❌ Corte #{cid} descartado.", fechar=True)
+            r = self.motor.descartar(cid, True, "descartado pelo Telegram")
+            return self._responder(q, f"❌ Corte #{cid} descartado" + (" e apagado do disco." if r.get("apagado") else "."),
+                                   fechar=True)
         if c["estado"] not in (D.REVISAO, D.APROVADO):
             return self._responder(q, f"Esse corte já está: {c['estado'].replace('_', ' ')}.", fechar=True)
         self._responder(q, f"🚀 Enviando o corte #{cid}…", fechar=True, aviso_curto="Enviando…")
