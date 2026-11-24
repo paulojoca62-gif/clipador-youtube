@@ -191,6 +191,13 @@ class Motor:
                 self.canais[nome] = canal
                 canal.iniciar()
                 log.info("[%s] vigiando", nome)
+            elif self.canais[nome].plataforma != cfg.get("plataforma", "twitch"):
+                self.canais.pop(nome).encerrar()          # trocou Twitch <-> Kick: recomeça a vigilância
+                canal = Canal(cfg, self.config, self.pasta, self.agendar_corte, self.avisar,
+                              pode_gravar=lambda: not self.disco_baixo)
+                self.canais[nome] = canal
+                canal.iniciar()
+                log.info("[%s] vigiando (%s)", nome, canal.plataforma)
             else:
                 self.canais[nome].layout = cfg.get("layout", "blur")
                 self.canais[nome].cam = cfg.get("cam")
@@ -601,7 +608,8 @@ class Motor:
                 if novo:
                     self.config.salvar("tiktok", novo)
                     cfg.update(novo)
-            res = mod.postar(cfg, {**corte, "_postagem": pid})
+            canal_cfg = self.config.canal(corte["canal"]) or {}
+            res = mod.postar(cfg, {**corte, "_postagem": pid, "_plataforma_live": canal_cfg.get("plataforma", "twitch")})
             if isinstance(res, str):
                 res = {"url": res, "ext_id": "", "status": "postado", "detalhe": ""}
         except Exception as e:  # noqa: BLE001

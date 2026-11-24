@@ -571,7 +571,8 @@ async function carregarEstado(){
     <div class="card"><h3>🤖 Gemini</h3><div class="num">${EST.gemini ? "✓" : "—"}</div><p>${EST.gemini ? "títulos, legendas e análise" : "coloque a chave em Configurações"}</p></div>`;
   $("#lista-canais-status").innerHTML = EST.canais.length ? EST.canais.map(c => `
     <div class="card"><h3>${c.ao_vivo ? '<span class="tag live">● AO VIVO</span>' : '<span class="tag">offline</span>'} ${esc(c.nome)}</h3>
-      <p>Chat: <b>${c.taxa}</b> msg/s · normal ${c.normal} · ${c.chat ? "chat conectado" : "chat desconectado"}</p>
+      ${c.plataforma === "kick" ? `<p>Kick · pico pelo áudio: <b>${c.nivel_audio ?? "—"}</b> dB · normal ${c.normal_audio ?? "aprendendo (2 min)"} dB</p>`
+        : `<p>Chat: <b>${c.taxa}</b> msg/s · normal ${c.normal} · ${c.chat ? "chat conectado" : "chat desconectado"}</p>`}
       <div class="barra"><i style="width:${Math.min(100, c.normal ? c.taxa / c.normal / 3 * 100 : 0)}%"></i></div>
       <p class="mini">Gravação: ${c.gravando ? "ativa" : "parada"} · reinícios automáticos: ${c.reinicios}${c.ultimo_erro && !c.ao_vivo ? " · " + esc(c.ultimo_erro.slice(0,80)) : ""}</p>
       <button class="btn peq" ${c.ao_vivo ? "" : "disabled"} data-canal="${esc(c.nome)}" onclick="clipar(this)">✂️ Clipar agora</button></div>`).join("")
@@ -717,7 +718,8 @@ function desenharCanais(lista){
   $("#form-canais").innerHTML = lista.map((c,i) => { const a = c.autorizacao || {}; const redes = a.redes || [];
     return `<div class="card canal-bloco" style="margin-bottom:12px" data-i="${i}">
       <div class="linha">
-        <div><label>Canal (Twitch)</label><input class="c-nome" value="${esc(c.nome)}" placeholder="ex.: alanzoka"></div>
+        <div style="flex:0 0 130px"><label>Plataforma</label><select class="c-plataforma"><option value="twitch" ${c.plataforma === "kick" ? "" : "selected"}>Twitch</option><option value="kick" ${c.plataforma === "kick" ? "selected" : ""}>Kick</option></select></div>
+        <div><label>Canal</label><input class="c-nome" value="${esc(c.nome)}" placeholder="ex.: alanzoka"></div>
         <div><label>Layout</label><select class="c-layout"><option value="blur" ${c.layout === "split" ? "" : "selected"}>Fundo desfocado</option><option value="split" ${c.layout === "split" ? "selected" : ""}>Câmera em cima</option></select></div>
         <div><label>Posição da câmera</label><select class="c-cam"><option value="">—</option>${Object.keys(CFG._cam_presets).map(k => `<option value="${k}" ${JSON.stringify(CFG._cam_presets[k]) === JSON.stringify(c.cam) ? "selected" : ""}>${k.replace("_"," ")}</option>`).join("")}</select></div>
         <div style="flex:0 0 auto"><label class="chave" style="margin-top:28px"><input type="checkbox" class="c-ativo" ${c.ativo !== false ? "checked" : ""}><span class="trilho"></span>vigiar</label></div>
@@ -741,7 +743,7 @@ function desenharCanais(lista){
 }
 function lerCanais(){
   return [...document.querySelectorAll(".canal-bloco")].map(d => { const cam = d.querySelector(".c-cam").value;
-    return {nome: d.querySelector(".c-nome").value.trim(), layout: d.querySelector(".c-layout").value, ativo: d.querySelector(".c-ativo").checked,
+    return {nome: d.querySelector(".c-nome").value.trim(), plataforma: d.querySelector(".c-plataforma").value, layout: d.querySelector(".c-layout").value, ativo: d.querySelector(".c-ativo").checked,
       cam: cam || null, autorizacao: {status: d.querySelector(".a-status").value, data_autorizacao: d.querySelector(".a-data").value,
       validade: d.querySelector(".a-validade").value, gravar: d.querySelector(".a-gravar").checked, editar: d.querySelector(".a-editar").checked,
       publicar: d.querySelector(".a-publicar").checked, redes: [...d.querySelectorAll(".a-rede:checked")].map(i => i.value), observacoes: d.querySelector(".a-obs").value}}; });

@@ -53,6 +53,7 @@ def palavras_frequentes(msgs, n=8):
 class Canal:
     def __init__(self, cfg_canal: dict, config, pasta: Path, agendar_corte, avisar=None, pode_gravar=None):
         self.nome = cfg_canal["nome"].lower().strip().lstrip("@")
+        self.plataforma = cfg_canal.get("plataforma") if cfg_canal.get("plataforma") in ("twitch", "kick") else "twitch"
         self.layout = cfg_canal.get("layout", "blur")
         self.cam = cfg_canal.get("cam")
         self.config = config
@@ -78,10 +79,16 @@ class Canal:
         self._ff = None
         self._fluxo = None
         self._threads = []
+        self.audio = deque()             # (epoch, dB) a cada 0,5 s, dos blocos já gravados (Kick)
+        self._blocos_ouvidos = set()
+        self.nivel_audio = None          # dB do último bloco / "normal" do streamer (para o painel)
+        self.normal_audio = None
 
     # ----- ciclo de vida
     def iniciar(self):
-        for alvo in (self._loop_gravar, self._loop_chat, self._loop_detectar):
+        alvos = (self._loop_gravar, self._loop_chat, self._loop_detectar) if self.plataforma == "twitch" else \
+            (self._loop_gravar, self._loop_audio)
+        for alvo in alvos:
             t = threading.Thread(target=alvo, name=f"{alvo.__name__}-{self.nome}", daemon=True)
             t.start()
             self._threads.append(t)
@@ -103,7 +110,9 @@ class Canal:
         return bool(segs) and time.time() - segs[-1][0] < 25
 
     def estado(self):
-        return {"nome": self.nome, "ao_vivo": self.ao_vivo, "chat": self.inicio_chat is not None,
+        return {"nome": self.nome, "plataforma": self.plataforma, "detector": "chat" if self.plataforma == "twitch" else "áudio",
+                "nivel_audio": self.nivel_audio, "normal_audio": self.normal_audio,
+                "ao_vivo": self.ao_vivo, "chat": self.inicio_chat is not None,
                 "taxa": round(self.taxa_atual, 1), "normal": round(self.baseline or 0, 1),
                 "gravando": self.gravando, "reinicios": self.reinicios, "falhas_seguidas": self.falhas_seguidas,
                 "ultimo_bloco": self.ultimo_bloco, "ultimo_erro": self.ultimo_erro}
@@ -144,8 +153,7 @@ class Canal:
         try:
             with open(erros, "wb") as saida_erro:
                 self._fluxo = util.popen_vinculado(
-                    util.comando_streamlink() + ["--loglevel", "warning", "--twitch-low-latency", "--stdout",
-                                                 f"https://www.twitch.tv/{self.nome}", qualidade],
+                    util.comando_streamlink() + ["--loglevel", "warning", "--stdout"] + self.url_live() + [qualidade],
                     stdout=w, stderr=saida_erro)
             self._ff = util.popen_vinculado(
                 [util.ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
@@ -192,6 +200,68 @@ class Canal:
         if time.time() - inicio < 60:
             linhas = erro.decode(errors="ignore").strip().splitlines()
             raise RuntimeError(linhas[-1] if linhas else "sem live agora")
+
+    def url_live(self) -> list:
+        if self.plataforma == "kick":
+            return [f"https://kick.com/{self.nome}"]
+        return ["--twitch-low-latency", f"https://www.twitch.tv/{self.nome}"]
+
+    # ----- Kick: pico pelo áudio (a Kick não oferece o chat a programas no PC sem um servidor)
+    def _loop_audio(self):
+        while not self.parar.wait(2):
+            try:
+                self.ouvir_blocos()
+            except Exception:  # noqa: BLE001
+                log.exception("[%s] erro na detecção pelo áudio", self.nome)
+
+    def ouvir_blocos(self, agora=None, ler=None):
+        """Mede o volume dos blocos novos (menos o que está sendo gravado) e testa o pico."""
+        from cortesex import midia
+        ler = ler or midia.ler_audio
+        segs = self.segmentos()[:-1]
+        disparos = []
+        for ts, p in segs:
+            if p.name in self._blocos_ouvidos:
+                continue
+            self._blocos_ouvidos.add(p.name)
+            try:
+                db = midia.perfil_audio(ler(p))["db"]
+            except Exception:  # noqa: BLE001
+                continue
+            for i, v in enumerate(db):
+                self.audio.append((ts + i * 0.5, v))
+            if db:
+                self.nivel_audio = round(max(db), 1)
+            # blocos antigos (de antes de abrir o programa) só ensinam o "normal"; não disparam corte
+            recente = (agora or time.time()) - ts < 60
+            r = self.tick_audio(ts + len(db) * 0.5, db, ao_vivo=recente and (self.ao_vivo if agora is None else True))
+            if r:
+                disparos.append(r)
+        nomes = {p.name for _, p in segs[-200:]}
+        self._blocos_ouvidos &= nomes | {p.name for _, p in self.segmentos()[-1:]}
+        return disparos
+
+    def tick_audio(self, fim_bloco, db_bloco, ao_vivo=True):
+        """Normal = mediana do volume nos últimos 5 min (precisa de 2 min de áudio).
+        Pico = média de 1 s acima do normal + limiar e acima do mínimo absoluto."""
+        D = self.config.get("deteccao")
+        while self.audio and self.audio[0][0] < fim_bloco - 300:
+            self.audio.popleft()
+        anteriores = [v for t, v in self.audio if t < fim_bloco - len(db_bloco) * 0.5]
+        if len(anteriores) < 240 or len(db_bloco) < 2:       # 240 × 0,5 s = 2 min de aquecimento
+            return None
+        anteriores.sort()
+        normal = anteriores[len(anteriores) // 2]
+        self.normal_audio = round(normal, 1)
+        janelas = [(db_bloco[i] + db_bloco[i + 1]) / 2 for i in range(len(db_bloco) - 1)]
+        pico = max(janelas)
+        excesso = pico - normal
+        limiar, minimo = float(D.get("audio_limiar_db", 9)), float(D.get("audio_minimo_db", -35))
+        if not ao_vivo or excesso < limiar or pico < minimo:
+            return None
+        quando = fim_bloco - len(db_bloco) * 0.5 + janelas.index(pico) * 0.5
+        score = round(10 ** (excesso / 20), 2)               # razão de amplitude: +9 dB ≈ 2,8x
+        return self.disparar(f"reação no áudio +{excesso:.0f} dB", score, quando)
 
     # ----- chat (Twitch por WebSocket na porta 443, passa por firewall e proxy)
     def _loop_chat(self):

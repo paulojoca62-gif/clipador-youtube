@@ -26,6 +26,7 @@ SEGREDOS = {
 }
 
 MODOS = ("manual", "semiautomatico", "automatico")
+PLATAFORMAS_LIVE = ("twitch", "kick")      # kick: sem chat (pico detectado pelo áudio)
 STATUS_AUTORIZACAO = ("nao_registrada", "pendente", "autorizado", "negado", "revogada")
 
 AUTORIZACAO_PADRAO = {
@@ -61,6 +62,8 @@ PADRAO = {
         "depois_segundos": 15,
         "aquecimento_segundos": 90,
         "agrupar_segundos": 30,       # picos a menos disso do anterior (ainda não capturado) viram um evento só
+        "audio_limiar_db": 9,         # Kick (sem chat): reação = volume X dB acima do normal do streamer
+        "audio_minimo_db": -35,       # e acima deste volume absoluto (ignora silêncio que "pula")
     },
     "corte": {
         "adaptativo": True,           # início/fim em pausas da fala, dentro dos limites abaixo
@@ -165,7 +168,8 @@ def normalizar_canal(c: dict) -> dict:
         aut["status"] = "nao_registrada"
     aut["redes"] = [r for r in aut.get("redes") or [] if r in ("youtube", "tiktok", "facebook")]
     c["autorizacao"] = aut
-    c.setdefault("plataforma", "twitch")
+    if c.get("plataforma") not in PLATAFORMAS_LIVE:
+        c["plataforma"] = "twitch"
     c.setdefault("layout", "blur")
     c.setdefault("ativo", True)
     return c

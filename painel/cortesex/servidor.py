@@ -173,7 +173,8 @@ class Painel:
                     aut["data_registro"] = date.today().isoformat()
                 aut["observacoes"] = str(aut.get("observacoes", ""))[:500]
                 layout = c.get("layout") if c.get("layout") in ("blur", "split") else "blur"
-                canais.append(normalizar_canal({"nome": nome, "plataforma": "twitch", "layout": layout,
+                plataforma = c.get("plataforma") if c.get("plataforma") in ("twitch", "kick") else "twitch"
+                canais.append(normalizar_canal({"nome": nome, "plataforma": plataforma, "layout": layout,
                                                 "ativo": bool(c.get("ativo", True)), "cam": cam_valida(c.get("cam")),
                                                 "autorizacao": aut}))
             cfg.salvar("canais", canais)

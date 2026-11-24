@@ -55,7 +55,8 @@ def resultado(url="", ext_id="", status="postado", detalhe="") -> dict:
 def texto_post(corte: dict, canal_credito=True, limite=2200, legenda=None) -> str:
     partes = [legenda if legenda is not None else (corte.get("legenda") or ""), " ".join(corte.get("hashtags") or [])]
     if canal_credito:
-        partes.append(f"Live: twitch.tv/{corte['canal']}")
+        site = "kick.com" if corte.get("_plataforma_live") == "kick" else "twitch.tv"
+        partes.append(f"Live: {site}/{corte['canal']}")
     return "\n\n".join(p for p in partes if p).strip()[:limite]
 
 
