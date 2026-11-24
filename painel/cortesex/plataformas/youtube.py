@@ -18,13 +18,41 @@ ESCOPOS = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis
 _cache = {"token": "", "expira": 0.0, "refresh": ""}
 
 
+def embutido() -> tuple[str, str]:
+    """Cadastro OAuth do CortesEX-PRESS (App para computador) colocado no instalador pelo CI.
+    Para app instalado, o Google não trata essa chave como segredo; mesmo assim ela não fica no código aberto."""
+    try:
+        from cortesex import _build
+        return str(getattr(_build, "YT_CLIENT_ID", "") or ""), str(getattr(_build, "YT_CLIENT_SECRET", "") or "")
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+
+def credenciais(cfg: dict) -> dict:
+    """As chaves do usuário (Avançado) têm prioridade; sem elas, o cadastro embutido."""
+    if cfg.get("client_id") and cfg.get("client_secret"):
+        return {**cfg}
+    cid, sec = embutido()
+    if cid and sec:
+        from cortesex import seguranca
+        seguranca.registrar_segredo(sec)
+    return {**cfg, "client_id": cid, "client_secret": sec}
+
+
+def login_pronto(cfg: dict) -> bool:
+    c = credenciais(cfg)
+    return bool(c.get("client_id") and c.get("client_secret"))
+
+
 def link_login(cfg: dict, redirect_uri: str, estado: str) -> str:
+    cfg = credenciais(cfg)
     return AUTH + "?" + urlencode({
         "client_id": cfg["client_id"], "redirect_uri": redirect_uri, "response_type": "code",
         "scope": ESCOPOS, "access_type": "offline", "prompt": "consent", "state": estado})
 
 
 def trocar_codigo(cfg: dict, codigo: str, redirect_uri: str) -> str:
+    cfg = credenciais(cfg)
     r = requests.post(TOKEN, data={"code": codigo, "client_id": cfg["client_id"],
                                    "client_secret": cfg["client_secret"], "redirect_uri": redirect_uri,
                                    "grant_type": "authorization_code"}, timeout=30)
@@ -42,6 +70,7 @@ def token(cfg: dict) -> str:
                            AUTENTICACAO)
     if _cache["token"] and _cache["refresh"] == cfg["refresh_token"] and time.time() < _cache["expira"]:
         return _cache["token"]
+    cfg = credenciais(cfg)
     r = requests.post(TOKEN, data={"client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
                                    "refresh_token": cfg["refresh_token"], "grant_type": "refresh_token"},
                       timeout=30)

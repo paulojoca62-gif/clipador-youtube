@@ -103,6 +103,7 @@ class Painel:
         m = self.motor
         if caminho == "/api/estado":
             return {"nome": NOME, "versao": VERSAO, "max_canais": MAX_CANAIS, "redirect": self.redirect,
+                    "youtube_login_embutido": bool(youtube.embutido()[0]),
                     **m.estado()}
         if caminho == "/api/config":
             return {**m.config.publico(), "_cam_presets": CAM_PRESETS, "_categorias": editorial.NOMES_CATEGORIAS,
@@ -268,8 +269,9 @@ class Painel:
         cfg = self.motor.config
         if caminho == "/api/youtube/login":
             y = cfg.get("youtube")
-            if not y.get("client_id") or not y.get("client_secret"):
-                raise ValueError("Preencha o ID do cliente e a chave secreta e salve.")
+            if not youtube.login_pronto(y):
+                raise ValueError("Esta versão não tem o login do YouTube embutido: preencha o ID do cliente e a "
+                                 "chave secreta em Avançado e salve.")
             y["redirect_uri"] = y.get("redirect_uri") or self.redirect
             return {"url": youtube.link_login(y, y["redirect_uri"], self.novo_estado("youtube"))}
         if caminho == "/api/tiktok/login":

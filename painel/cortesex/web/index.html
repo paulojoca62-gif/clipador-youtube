@@ -342,16 +342,18 @@ code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px;font-siz
     <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
       <div class="card" id="c-youtube">
         <h3>▶️ YouTube <span class="tag" id="st-youtube"></span></h3>
-        <label>ID do cliente OAuth</label><input id="yt-client_id" placeholder="xxxx.apps.googleusercontent.com">
-        <label>Chave secreta do cliente</label><input id="yt-client_secret" type="password" placeholder="deixe vazio para manter">
-        <label>Privacidade</label><select id="yt-privacidade"><option value="public">Público</option><option value="unlisted">Não listado</option><option value="private">Privado</option></select>
         <div class="acoes">
-          <button class="btn sec peq" onclick="salvarConta('youtube')">💾 Salvar</button>
-          <button class="btn peq" onclick="conectar('youtube')">🔗 Conectar canal</button>
+          <button class="btn" onclick="conectar('youtube')">🔑 Entrar com YouTube</button>
           <button class="btn sec peq" onclick="testar('youtube')">🧪 Testar</button>
           <button class="btn perigo peq" onclick="desconectar('youtube')">Desconectar</button>
         </div>
-        <details><summary>Como configurar</summary><ol>
+        <p class="mini" id="yt-ajuda">Abre o login do Google no navegador; escolha a conta e o canal, aceite e volte para cá já conectado. Se aparecer "O Google não verificou este app", clique em Avançado → Continuar.</p>
+        <label>Privacidade dos vídeos</label><select id="yt-privacidade" onchange="salvarConta('youtube')"><option value="public">Público</option><option value="unlisted">Não listado</option><option value="private">Privado</option></select>
+        <details id="yt-avancado"><summary>Avançado: usar o seu próprio cadastro do Google</summary>
+        <label>ID do cliente OAuth</label><input id="yt-client_id" placeholder="xxxx.apps.googleusercontent.com">
+        <label>Chave secreta do cliente</label><input id="yt-client_secret" type="password" placeholder="deixe vazio para manter">
+        <div class="acoes"><button class="btn sec peq" onclick="salvarConta('youtube')">💾 Salvar</button></div>
+        <ol>
           <li>No Google Cloud, ative a <b>YouTube Data API v3</b>.</li>
           <li>Crie um <b>ID do cliente OAuth</b> do tipo <b>App para computador</b> (ou Aplicativo da Web com o URI <code class="redir"></code>).</li>
           <li>Na tela de consentimento, adicione o seu e-mail em <b>Usuários de teste</b>.</li>
@@ -630,6 +632,8 @@ async function carregarConfig(){
   val("tt-client_key", CFG.tiktok.client_key); val("tt-redirect_uri", CFG.tiktok.redirect_uri); val("fb-app_id", CFG.facebook.app_id);
   val("gm-modelo", CFG.gemini.modelo); val("tg-chat_id", CFG.telegram.chat_id); val("tg-avisar_postagem", CFG.telegram.avisar_postagem); val("tg-avisar_erro", CFG.telegram.avisar_erro); val("tg-revisar_pelo_telegram", CFG.telegram.revisar_pelo_telegram !== false); val("tg-enviar_video", CFG.telegram.enviar_video !== false);
   marcar("st-gemini", CFG.gemini.api_key, "chave salva", "sem chave");
+  if(EST && EST.youtube_login_embutido === false && !CFG.youtube.client_id){ $("#yt-avancado").open = true;
+    $("#yt-ajuda").textContent = "Esta versão não tem o login embutido: preencha o seu cadastro em Avançado, salve e clique em Entrar com YouTube."; }
   const opr = CFG.openrouter || {};
   marcar("st-openrouter", opr.api_key && opr.ativo !== false, "reserva ligada", opr.api_key ? "desligado" : "sem chave");
   val("or-modelos", opr.modelos || ""); val("or-ativo", opr.ativo !== false);

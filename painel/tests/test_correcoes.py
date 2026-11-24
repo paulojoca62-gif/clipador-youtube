@@ -608,3 +608,29 @@ def test_telegram_descartar_usa_a_mesma_regra(ambiente):
     r.tratar({"update_id": 1, "callback_query": {"id": "q", "data": T.dados_botao("1:AAA", "d", cid),
                                                  "message": {"message_id": 3, "chat": {"id": 5}}}})
     assert not arq["video"].exists() and any("apagado do disco" in (e or {}).get("text", "") for e in enviados)
+
+
+# ================================================================ login do YouTube embutido
+def test_youtube_usa_cadastro_embutido_e_o_proprio_tem_prioridade(monkeypatch):
+    from cortesex.plataformas import youtube
+    import types
+    monkeypatch.setitem(sys.modules, "cortesex._build",
+                        types.SimpleNamespace(YT_CLIENT_ID="123-abc.apps.googleusercontent.com",
+                                              YT_CLIENT_SECRET="GOCSPX-embutido123"))
+    assert youtube.login_pronto({})
+    url = youtube.link_login({}, "http://127.0.0.1:8777/", "estado1")
+    assert "client_id=123-abc.apps.googleusercontent.com" in url and "GOCSPX" not in url
+    assert "GOCSPX-embutido123" not in seguranca.redigir("erro GOCSPX-embutido123")   # registrado para redação
+    proprio = {"client_id": "meu.apps.googleusercontent.com", "client_secret": "GOCSPX-meu"}
+    assert youtube.credenciais(proprio)["client_id"] == "meu.apps.googleusercontent.com"
+    monkeypatch.setitem(sys.modules, "cortesex._build", types.SimpleNamespace(BUILD=1))
+    assert not youtube.login_pronto({})
+
+
+def test_botao_entrar_sem_cadastro_explica(painel, monkeypatch):
+    porta, p, m, _ = painel
+    import types
+    monkeypatch.setitem(sys.modules, "cortesex._build", types.SimpleNamespace(BUILD=1))
+    st, _, corpo = pedir(porta, "POST", "/api/youtube/login", cab={"X-CortesEX": p.token, "Content-Type": "application/json"},
+                         corpo={})
+    assert st == 400 and "Avançado" in corpo.decode()

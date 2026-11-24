@@ -60,9 +60,17 @@ jobs:
         run: python -m pytest -q tests
 
       - name: Empacotar (PyInstaller)
+        env:
+          # cadastro OAuth do YouTube (App para computador) guardado nos segredos do repositório
+          YT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
           # número do build dentro do exe: o atualizador compara com o versao.json do release
-          "BUILD = ${{ github.run_number }}`nCOMMIT = `"$env:GITHUB_SHA`"`n" | Out-File -Encoding utf8 cortesex\_build.py
+          $linhas = @("BUILD = ${{ github.run_number }}", "COMMIT = '$env:GITHUB_SHA'",
+                      "YT_CLIENT_ID = '$($env:YT_ID -replace "[^A-Za-z0-9._-]", '')'",
+                      "YT_CLIENT_SECRET = '$($env:YT_SECRET -replace "[^A-Za-z0-9._-]", '')'")
+          $linhas -join "`n" | Out-File -Encoding utf8 cortesex\_build.py
+          if ($env:YT_ID) { Write-Host "login do YouTube embutido" } else { Write-Host "sem YT_CLIENT_ID: login do YouTube pede o cadastro próprio" }
           python -m PyInstaller run.py --noconfirm --clean --name CortesEX-PRESS --noconsole `
             --icon assets\cortesex.ico `
             --add-data "cortesex\web;web" --add-data "cortesex\fonts;fonts" `
